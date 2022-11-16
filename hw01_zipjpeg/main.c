@@ -2,8 +2,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define BUFFER_SIZE 2000000
+#include <sys/stat.h>
 
 typedef char* string;
 struct LFH
@@ -32,101 +31,92 @@ struct LFH
     uint16_t extraFieldLength;
     // Название файла (размером filenameLength)
     // uint8_t *filename;
-    // Дополнительные данные (размером extraFieldLength)
-    // uint8_t *extraField;
 // };
 } __attribute__((packed)) localFileHeader;
 
 const int offsetToFNLen = 26;
 
-int getFileSize(FILE *fp) {
-    fseek(fp, 0L, SEEK_END);
-    int size = ftell(fp);
-    fseek(fp, 0L, SEEK_SET);
-    return size;
+void checkArgs(int *argc, string argv[]) {
+    if (*argc != 2) {
+        printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
+        "Программа принимает на вход только один аргумент - путь до проверяемого файла\n\n"
+        "------ Синтаксис ------\n"
+        "%s <filepath>\n"
+        "-----------------------\n\n"
+        "Пример запуска\n"
+        "%s ./files/Archive.zip\n\n"
+        "--- Повторите запуск правильно ---\n\n", argv[0], argv[0]);
+        exit (1);
+    }
+}
+
+size_t getFileSize(FILE *fp) {
+    struct stat finfo;
+    if (!fstat(fileno(fp), &finfo)) {
+        return finfo.st_size;
+    }
+    else {
+        printf("Cannot get file info.\n");
+        exit (1);
+    }
 }
 
 size_t searchSignature( \
     unsigned char *source, \
     unsigned char *signature, \
-    size_t sourceLength, \
+    size_t *sourceLength, \
     size_t signatureLength, \
-    int searchDirection, \
-    size_t startOffset \
+    size_t *startOffset \
 ) {
-    if (searchDirection) {
-        if (startOffset < sourceLength) {
-            size_t i = startOffset, k;
-            while (i < (sourceLength - startOffset - signatureLength + 1)) {
-                k = 0;
-                while ((source[i + k] == signature[k]) && (k < signatureLength)) {
-                    k++;
-                }
-                if (k == signatureLength) {
-                    return i;
-                }
-                i++;
-            }
-        };
-    }
-    else {
-        size_t k, i = sourceLength - signatureLength;
-        while (i >= 0) {
+    if (*startOffset < *sourceLength) {
+        size_t i = *startOffset;
+        size_t k;
+        while (i < (*sourceLength - *startOffset - signatureLength + 1)) {
             k = 0;
             while ((source[i + k] == signature[k]) && (k < signatureLength)) {
+                if (k == signatureLength - 1) {
+                    return i;
+                } 
                 k++;
             }
-            if (k == signatureLength) {
-                return i;
-            };
-            i--;
+            i++;
         }
     }
-    return sourceLength;
+    return *sourceLength;
 }
 
+int main(int argc, string argv[]) {
 
-void getFileBytes(FILE *fp, unsigned char *filebytes, int len) {
-    for (int i = 0; i < len; i++) {
-        filebytes[i] = fgetc(fp);
-    }
-}
+    checkArgs(&argc, argv);
+    string CUR_FILE_NAME = argv[1];
+    (void)argc;
 
-int main(int argc, char *argv[]) {
     FILE *fp;
-    size_t fileLength;
     size_t bufferOffset = 0;
-    unsigned char BUFFER[BUFFER_SIZE] = {"\x0"};
     unsigned char ZIP_SIGNATURE[] = "\x50\x4b\x03\x04";
 
-    char* CUR_FILE_NAME = argv[1];
-    (void)argc;
-    
-    fp = fopen(CUR_FILE_NAME, "rb");
-    fileLength = getFileSize(fp);
-    if (fileLength > BUFFER_SIZE) {
-        fclose(fp);
-        printf("File is too big, max size is %d bytes", BUFFER_SIZE);
-        return -1;
+    if ((fp = fopen(CUR_FILE_NAME, "rb")) == NULL) {
+        printf("Cannot open file.\n");
+        exit (1);
     }
-    else{
-        getFileBytes(fp, BUFFER, fileLength);
-    }
+    size_t fileLength = getFileSize(fp);
+    unsigned char* BUFFER = malloc(sizeof(unsigned char [fileLength]));
+    fread(BUFFER, sizeof(unsigned char), fileLength, fp);
     fclose(fp);
 
-    size_t zipSignatureFirstPosition = searchSignature(BUFFER, ZIP_SIGNATURE, sizeof(BUFFER), sizeof(ZIP_SIGNATURE) - 1, 1, bufferOffset);
-    if (zipSignatureFirstPosition < sizeof(BUFFER)) {
+    size_t zipSignatureFirstPosition = searchSignature(BUFFER, ZIP_SIGNATURE, &fileLength, sizeof(ZIP_SIGNATURE) - 1, &bufferOffset);
+    if (zipSignatureFirstPosition < fileLength) {
         printf("File %s contains zip, including:\n", CUR_FILE_NAME);
         size_t signaturePosition;
         while (1) {
-            signaturePosition = searchSignature(BUFFER, ZIP_SIGNATURE, sizeof(BUFFER), sizeof(ZIP_SIGNATURE) - 1, 1, bufferOffset);
-            if (signaturePosition == sizeof(BUFFER)) {
+            signaturePosition = searchSignature(BUFFER, ZIP_SIGNATURE, &fileLength, sizeof(ZIP_SIGNATURE) - 1, &bufferOffset);
+            if (signaturePosition == fileLength) {
                 break;
             }
             memcpy(&localFileHeader, BUFFER + signaturePosition, sizeof(localFileHeader));
             unsigned char hex_text[] = {BUFFER[signaturePosition + offsetToFNLen], BUFFER[signaturePosition + offsetToFNLen + 1]};
             unsigned int fileNameLen = (unsigned int) (*hex_text);
-            bufferOffset += signaturePosition + offsetToFNLen + 4 + fileNameLen;
+            bufferOffset = signaturePosition + offsetToFNLen + 4 + fileNameLen;
             if (BUFFER[sizeof(localFileHeader) + localFileHeader.filenameLength - 1] == '/' && localFileHeader.compressedSize == 0 && localFileHeader.crc32 == 0)
             {
                 continue;
@@ -134,9 +124,11 @@ int main(int argc, char *argv[]) {
             else {
                 printf("%.*s\n", fileNameLen, BUFFER + signaturePosition + offsetToFNLen + 4);
             }
+            
         }
     } else {
-        printf("File %s doen't contain zip\n", CUR_FILE_NAME);
+        printf("File %s doesn't contain zip\n", CUR_FILE_NAME);
     }
+    free(BUFFER);
 	return 0;
 }
