@@ -138,7 +138,7 @@ int main(int argc, string argv[]) {
 
         int fnl = 0;
         size_t next_cdfh_position = ecodSignaturePosition - eocd1.centralDirectoryOffset;
-        for (int x = 0; x < 185; x++) {
+        for (int x = 0; x < (short int) eocd1.sizeOfCentralDirectory; x++) {
             memcpy(&cdFileHeader, BUFFER + next_cdfh_position, sizeof(cdFileHeader));
             fnl = cdFileHeader.filenameLength;
             printf("%d) %.*s\n", x + 1, fnl, BUFFER + next_cdfh_position + sizeof(cdFileHeader));
