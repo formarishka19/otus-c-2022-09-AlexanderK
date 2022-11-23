@@ -7,32 +7,56 @@
 typedef char* string;
 struct LFH
 {
-    // Обязательная сигнатура, равна 0x04034b50
     uint32_t signature;
-    // Минимальная версия для распаковки
     uint16_t versionToExtract;
-    // Битовый флаг
     uint16_t generalPurposeBitFlag;
-    // Метод сжатия (0 - без сжатия, 8 - deflate)
     uint16_t compressionMethod;
-    // Время модификации файла
     uint16_t modificationTime;
-    // Дата модификации файла
     uint16_t modificationDate;
-    // Контрольная сумма
     uint32_t crc32;
-    // Сжатый размер
     uint32_t compressedSize;
-    // Несжатый размер
     uint32_t uncompressedSize;
-    // Длина название файла
     uint16_t filenameLength;
-    // Длина поля с дополнительными данными
     uint16_t extraFieldLength;
-    // Название файла (размером filenameLength)
     // uint8_t *filename;
 // };
 } __attribute__((packed)) localFileHeader;
+
+struct CDFH
+{
+    uint32_t signature;
+    uint16_t versionMadeBy;
+    uint16_t versionToExtract;
+    uint16_t generalPurposeBitFlag;
+    uint16_t compressionMethod;
+    uint16_t modificationTime;
+    uint16_t modificationDate;
+    uint32_t crc32;
+    uint32_t compressedSize;
+    uint32_t uncompressedSize;
+    uint16_t filenameLength;
+    uint16_t extraFieldLength;
+    uint16_t fileCommentLength;
+    uint16_t diskNumber;
+    uint16_t internalFileAttributes;
+    uint32_t externalFileAttributes;
+    uint32_t localFileHeaderOffset;
+    // filename
+    // extraField
+    // fileComment
+} __attribute__((packed)) cdFileHeader;
+
+struct EOCD 
+{
+    uint16_t diskNumber;
+    uint16_t startDiskNumber;
+    uint16_t numberCentralDirectoryRecord;
+    uint16_t totalCentralDirectoryRecord;
+    uint32_t sizeOfCentralDirectory;
+    uint32_t centralDirectoryOffset;
+    uint16_t commentLength;
+ 
+} __attribute__((packed)) eocd1;
 
 const int offsetToFNLen = 26;
 
@@ -94,6 +118,7 @@ int main(int argc, string argv[]) {
     FILE *fp;
     size_t bufferOffset = 0;
     unsigned char ZIP_SIGNATURE[] = "\x50\x4b\x03\x04";
+    unsigned char EOCD_SIGNATURE[] = "\x50\x4b\x05\x06";
 
     if ((fp = fopen(CUR_FILE_NAME, "rb")) == NULL) {
         printf("Cannot open file.\n");
@@ -106,29 +131,23 @@ int main(int argc, string argv[]) {
 
     size_t zipSignatureFirstPosition = searchSignature(BUFFER, ZIP_SIGNATURE, &fileLength, sizeof(ZIP_SIGNATURE) - 1, &bufferOffset);
     if (zipSignatureFirstPosition < fileLength) {
-        printf("File %s contains zip, including:\n", CUR_FILE_NAME);
-        size_t signaturePosition;
-        while (1) {
-            signaturePosition = searchSignature(BUFFER, ZIP_SIGNATURE, &fileLength, sizeof(ZIP_SIGNATURE) - 1, &bufferOffset);
-            if (signaturePosition == fileLength) {
-                break;
-            }
-            memcpy(&localFileHeader, BUFFER + signaturePosition, sizeof(localFileHeader));
-            unsigned char hex_text[] = {BUFFER[signaturePosition + offsetToFNLen], BUFFER[signaturePosition + offsetToFNLen + 1]};
-            unsigned int fileNameLen = (unsigned int) (*hex_text);
-            bufferOffset = signaturePosition + offsetToFNLen + 4 + fileNameLen;
-            if (BUFFER[sizeof(localFileHeader) + localFileHeader.filenameLength - 1] == '/' && localFileHeader.compressedSize == 0 && localFileHeader.crc32 == 0)
-            {
-                continue;
-            }
-            else {
-                printf("%.*s\n", fileNameLen, BUFFER + signaturePosition + offsetToFNLen + 4);
-            }
-            
+        printf("File %s contains zip, including ", CUR_FILE_NAME);
+        size_t ecodSignaturePosition = searchSignature(BUFFER, EOCD_SIGNATURE, &fileLength, sizeof(EOCD_SIGNATURE) - 1, &bufferOffset);
+        memcpy(&eocd1, BUFFER + ecodSignaturePosition, sizeof(eocd1));
+        printf("%hu files or folders:\n", (short int) eocd1.sizeOfCentralDirectory);
+
+        int fnl = 0;
+        size_t next_cdfh_position = ecodSignaturePosition - eocd1.centralDirectoryOffset;
+        for (int x = 0; x < 185; x++) {
+            memcpy(&cdFileHeader, BUFFER + next_cdfh_position, sizeof(cdFileHeader));
+            fnl = cdFileHeader.filenameLength;
+            printf("%d) %.*s\n", x + 1, fnl, BUFFER + next_cdfh_position + sizeof(cdFileHeader));
+            next_cdfh_position = next_cdfh_position + sizeof(cdFileHeader) + cdFileHeader.filenameLength + cdFileHeader.extraFieldLength + cdFileHeader.fileCommentLength;
         }
     } else {
         printf("File %s doesn't contain zip\n", CUR_FILE_NAME);
     }
+
     free(BUFFER);
 	return 0;
 }
