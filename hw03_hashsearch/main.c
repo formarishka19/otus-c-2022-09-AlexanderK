@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <math.h>
 
 #define COMBO(x, y) ((x << 8) | y)
 #define CYR(x) (((x >= 0xD090 && x <= 0xD0BF) || (x >= 0xD180 && x <= 0xD18F) || x == 0xD081 || x == 0xD191))
@@ -10,9 +11,13 @@
 typedef struct HT_ITEM ht_item;
 typedef struct HASH_TABLE h_table;
 
-const int alphabet_size = 53639;
-const unsigned int table_size = 200000; 
+//-------- config --------
+const unsigned long init_table_size = 128;
+const int table_fill_limit_percent = 75;
+//------------------------
+
 const unsigned int hash_size = 199967;
+const int alphabet_size = 53639;
 
 struct HT_ITEM {
     unsigned int value;
@@ -23,8 +28,30 @@ struct HASH_TABLE {
     unsigned long size;
     unsigned long count;
     int collisions;
+    int realloc_count;
     ht_item **items;
 };
+
+unsigned long get_prime_mod(unsigned long n)
+{
+    if (n & 1)
+        n -= 2;
+    else
+        n--;
+  
+    unsigned long i, j;
+    for (i = n; i >= 2; i -= 2) {
+        if (i % 2 == 0)
+            continue;
+        for (j = 3; j <= sqrt(i); j += 2) {
+            if (i % j == 0)
+                break;
+        }
+        if (j > sqrt(i))
+            return i;
+    }
+    return 2;
+}
 
 unsigned long raise_power(unsigned int x, int *power)
 {
@@ -51,17 +78,14 @@ unsigned long get_hash(char* word, int word_size) {
         hash += (cur_ch * raise_power(alphabet_size, &i));
         hash = hash % hash_size;
     }
-    if (hash < table_size) {
-        return hash;
-    }
-    else {
-        printf("runtime error, small table size %u for hash %lu", table_size, hash);
-        exit(1);
-    }
-    
+    return hash;
 }
 
-// init and free HASH_TABLE
+unsigned long get_index(unsigned long *hash, unsigned long *step, unsigned long *mod) {
+    unsigned long i1 = *hash % *mod;
+    unsigned long i2 = 1 + *hash % (*mod - 1);
+    return ((i1 + (*step * i2)) % *mod);
+}
 
 ht_item *create_item(char* key) {
     ht_item* item = (ht_item* ) malloc(sizeof(ht_item));
@@ -88,7 +112,7 @@ h_table *create_table(unsigned long size) {
     // allocate array of pointers to items structures
     ht_item **items = malloc(size * sizeof(ht_item *));
     // allocate structs and have the array point to them
-    for (unsigned long x=0; x<table_size; x++) {
+    for (unsigned long x=0; x<size; x++) {
         items[x] = malloc(sizeof(struct HT_ITEM));
         if (!items[x]) {
             puts("error allocating dynamic message for item of hash table");
@@ -101,50 +125,106 @@ h_table *create_table(unsigned long size) {
     table->size = size;
     table->count = 0;
     table->collisions = 0;
+    table->realloc_count = 0;
 
     return table;
 }
 
-void free_h_item(ht_item* item) {
-    free(item->key);
-    free(item);
+void expand_table(h_table *table, const unsigned long *block_size) {
+
+    ht_item **items = realloc(table->items, (table->size + *block_size) * sizeof(ht_item *));
+    if (!items) {
+        puts("error allocating dynamic message for item of hash table");
+        exit(1);
+    }
+    for (unsigned long x=table->size; x<(table->size + *block_size); x++) {
+        items[x] = malloc(sizeof(struct HT_ITEM));
+        if (!items[x]) {
+            puts("error allocating dynamic message for item of hash table");
+            exit(1);
+        }
+        items[x] = create_item("");
+    }
+    table->items = items;
+    table->size += *block_size;
 }
 
 void free_h_table(h_table* table) {
     for (size_t i = 0; i < table->size; i++) {
-        free_h_item(table->items[i]);
+        free(table->items[i]);
     }
     free(table->items);
     free(table);
 }
 
-// insert and print items
-
-void insert_h_item(h_table* table, char* key) {
-    unsigned long index = get_hash(key, strlen(key));
-    // printf("%lu\n",index);
-    if (table->items[index]->value == 0) {
-        if (table->count >= table->size) {
-            puts("runtime error. hash table is full. Exiting...");
-            free_h_table(table);
-            exit(1);
+void rellocate_table(h_table *table, unsigned long *mod, unsigned long *old_size) {
+    unsigned long step = 0;
+    unsigned long index;
+    unsigned long hash;
+    int inserted = 0;
+    int cur_value;
+    for (unsigned long x=0; x<*old_size; x++) {
+        if (table->items[x]->value != 0) {
+            char* cur_key = (char* ) malloc(strlen(table->items[x]->key) + 1);
+            if (!cur_key) {
+                puts("realloc error malloc for temp key");
+                free_h_table(table);
+                exit(1);
+            }
+            strcpy(cur_key, table->items[x]->key);
+            cur_value = table->items[x]->value;
+            strcpy(table->items[x]->key, "");
+            table->items[x]->value = 0;
+            hash = get_hash(cur_key, strlen(cur_key));
+            while (!inserted || step > (*mod - 1) ) {
+                index = get_index(&hash, &step, mod);
+                if (table->items[index]->value == 0) {
+                    strcpy(table->items[index]->key, cur_key);
+                    table->items[index]->value = cur_value;
+                    inserted = 1;
+                }
+                else {
+                    step++;
+                }
+            }
+            inserted = 0;
+            free(cur_key);
         }
-        strcpy(table->items[index]->key, key);
-        table->items[index]->value++;
-        table->count++;
-    }
-    else {
-        if (strcmp(table->items[index]->key, key) != 0) {
-            puts("COLLISION IN HASH TABLE!");
-            printf("word exists %s, new word %s hash %lu\n", table->items[index]->key, key, index);
-            table->collisions++;
-            // free_h_table(table);
-            // exit(1);
-        }  
-        else {
-            table->items[index]->value++;
-        }
+        step = 0;
         
+    }
+    table->realloc_count++;
+}
+
+void insert_h_item(h_table *table, char *key, unsigned long *mod) {
+    unsigned long hash;
+    unsigned long step = 0;
+    unsigned long index;
+    int inserted = 0;
+    hash = get_hash(key, strlen(key));
+    while (!inserted || step > (*mod - 1) ) {
+        index = get_index(&hash, &step, mod);
+        if (table->items[index]->value == 0) {
+            strcpy(table->items[index]->key, key);
+            table->items[index]->value++;
+            table->count++;
+            inserted = 1;
+        }
+        else {
+            if (strcmp(table->items[index]->key, key) != 0) {
+                table->collisions++;
+                step++;
+            }
+            else {
+                table->items[index]->value++;
+                inserted = 1;
+            }
+        }
+    }
+    if (step > (*mod - 1)) {
+        puts("hash table overflowed, exiting");
+        free_h_table(table);
+        exit(1);
     }
 }
 
@@ -154,16 +234,12 @@ void print_h_table(h_table* table) {
     for (size_t i = 0; i < table->size; i++) {
         if (table->items[i]->value != 0) {
             words_count++;
-            
         }
     }
     puts("------ STATISTICS -------");
     printf("words counted %d\n", words_count);
-    printf("coillision count %d\n", table->collisions);
-    puts("------------------------");
-    if (table->collisions > 0) {
-        puts("BAD HASH FUNCTION!!!");
-    }
+    printf("resolved collisions count %d\n", table->collisions);
+    printf("hash table was expanded %d times\n", table->realloc_count);
     puts("------ WORDS COUNTS -------");
 
     // sorting results...
@@ -194,7 +270,6 @@ void print_h_table(h_table* table) {
     }
 }
 
-
 void checkArgs(int* argc, char* argv[]) {
     if (*argc != 2) {
         printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
@@ -220,94 +295,45 @@ size_t getFileSize(FILE *fp) {
     }
 }
 
-size_t clean_text(FILE *fp, size_t* fsize, unsigned char* buffer_out) {
-    size_t k = 0;
-    unsigned char ch, next_ch;
-    for (size_t i = 0; i < *fsize; i++) {
-        ch = fgetc(fp);
-        if (ch < 0x7F) {
-            if ((ch >= 0x41 && ch <= 0x5A) || (ch >= 0x61 && ch <= 0x7A) || ch == 0x20) {
-                buffer_out[k] = ch;
-            }
-            else {
-                buffer_out[k] = 0x20;
-            }
-        }
-        else {
-            if (ch >= 0xD0 && ch <= 0xD1) {
-                next_ch = fgetc(fp);
-                if  (CYR(COMBO(ch, next_ch))){
-                    buffer_out[k] = ch;
-                    buffer_out[++k] = next_ch;
-                }
-            }
-            else {
-                buffer_out[k] = 0x20;
-            }
-        }
-        k++;
-    }
-    return k;
-}
-
-
 
 int main(int argc, char* argv[]) {
     checkArgs(&argc, argv);
     (void)argc;
 
-    FILE *fpin, *fpout, *fptemp;
+    FILE *fpin;
     char* CUR_FILE_NAME = argv[1];
-    // char* CUR_FILE_NAME = "./files/test.txt";
-    char* TEMP_FILE_NAME = "./1.txt";
 
-    if ((fpin=fopen(CUR_FILE_NAME, "rb") ) == NULL) {
+    if ((fpin=fopen(CUR_FILE_NAME, "r") ) == NULL) {
         printf("Error opening file %s\n", CUR_FILE_NAME);
         exit (1);
     }
-
     size_t fsize = getFileSize(fpin);
-    unsigned char* buffer_cleaned = (unsigned char* ) malloc(fsize * sizeof(char));
-    if (!buffer_cleaned) {
-        printf("Error dynamic memory allocation\n");
-        exit (1);
+    
+    char buff[fsize];
+    char sep[20]="()/., \n:;-[]-";
+    char *istr;
+
+    unsigned long mod = get_prime_mod(init_table_size);
+    unsigned long oldsize;
+    h_table* hashtable = create_table(init_table_size);
+
+    while (fgets(buff, sizeof(buff), fpin) != 0) {
+        istr = strtok (buff,sep);
+        while (istr != NULL)
+        {
+            if (strcmp(istr, "\x0d") != 0) {
+                if (hashtable->count >= (hashtable->size * table_fill_limit_percent / 100.0)) {
+                    oldsize = hashtable->size;
+                    expand_table(hashtable, &init_table_size);
+                    mod = get_prime_mod(hashtable->size);
+                    rellocate_table(hashtable, &mod, &oldsize);
+                }
+                insert_h_item(hashtable, istr, &mod);
+            }
+            istr = strtok(NULL,sep);
+        }
     }
-    size_t out_size = clean_text(fpin, &fsize, buffer_cleaned);
     fclose(fpin);
-
-    if ((fpout=fopen(TEMP_FILE_NAME, "wb") ) == NULL) {
-        printf("Error creating temporary file %s\n", TEMP_FILE_NAME);
-        exit (1);
-    }
-
-    size_t x = 0;
-    while (x < out_size) {
-        fputc(buffer_cleaned[x], fpout);
-        x++;
-    }
-    fclose(fpout);
-    free(buffer_cleaned);
-    
-    if ((fptemp=fopen(TEMP_FILE_NAME, "r") ) == NULL) {
-        printf("Error opening temporary file %s\n", TEMP_FILE_NAME);
-        exit (1);
-    }
-    fsize = getFileSize(fptemp);
-
-    h_table* hashtable = create_table(table_size);
-    
-    char word[out_size];
-    int result;
-    while(1) {
-        result = fscanf(fptemp, "%s", word);
-        if (result < 1) break;
-        insert_h_item(hashtable, word);
-    }
-    fclose(fptemp);
-    remove(TEMP_FILE_NAME);
-    
-    puts("printing...");
-    
     print_h_table(hashtable);
     free_h_table(hashtable);
 
