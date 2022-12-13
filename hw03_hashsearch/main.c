@@ -23,7 +23,7 @@ struct HASH_TABLE {
     unsigned long size;
     unsigned long count;
     int collisions;
-    ht_item** items;
+    ht_item **items;
 };
 
 unsigned long raise_power(unsigned int x, int *power)
@@ -63,35 +63,45 @@ unsigned long get_hash(char* word, int word_size) {
 
 // init and free HASH_TABLE
 
-ht_item* create_item(char* key) {
+ht_item *create_item(char* key) {
     ht_item* item = (ht_item* ) malloc(sizeof(ht_item));
-    item->key = (char* ) malloc(strlen(key) + 1);
-    if (!item || !item->key) {
+    if (!item) {
         puts("error allocating dynamic message for item of hash table");
         exit(1);
     }
+    item->key = (char* ) malloc(strlen(key) + 1);
+    if (!item->key) {
+        puts("error allocating dynamic message for item key");
+        exit(1);
+    }
     strcpy(item->key, key);
-    item->value = 1;
+    item->value = 0;
     return item;
 }
 
-h_table* create_table(unsigned long size) {
-    h_table* table = (h_table* ) malloc(sizeof(h_table));
+h_table *create_table(unsigned long size) {
+    h_table *table = (h_table* ) malloc(sizeof(h_table));
     if (!table) {
         puts("error allocating dynamic message for hash table");
         exit(1);
     }
+    // allocate array of pointers to items structures
+    ht_item **items = malloc(size * sizeof(ht_item *));
+    // allocate structs and have the array point to them
+    for (unsigned long x=0; x<table_size; x++) {
+        items[x] = malloc(sizeof(struct HT_ITEM));
+        if (!items[x]) {
+            puts("error allocating dynamic message for item of hash table");
+            exit(1);
+        }
+        items[x] = create_item("");
+    }
+    table->items = items;
+
     table->size = size;
     table->count = 0;
     table->collisions = 0;
-    table->items = (ht_item** ) calloc(table->size, sizeof(ht_item*));
-    if (!table->items) {
-        puts("error allocating dynamic message for hash table");
-        exit(1);
-    }
-    for (unsigned long i = 0; i < table->size; i++) {
-        table->items[i] = NULL;
-    }
+
     return table;
 }
 
@@ -102,10 +112,7 @@ void free_h_item(ht_item* item) {
 
 void free_h_table(h_table* table) {
     for (size_t i = 0; i < table->size; i++) {
-        ht_item* item = table->items[i];
-        if (item != NULL) {
-            free_h_item(item);
-        }
+        free_h_item(table->items[i]);
     }
     free(table->items);
     free(table);
@@ -115,26 +122,27 @@ void free_h_table(h_table* table) {
 
 void insert_h_item(h_table* table, char* key) {
     unsigned long index = get_hash(key, strlen(key));
-    ht_item* exist_item = table->items[index];
-    if (exist_item == NULL) {
+    // printf("%lu\n",index);
+    if (table->items[index]->value == 0) {
         if (table->count >= table->size) {
             puts("runtime error. hash table is full. Exiting...");
             free_h_table(table);
             exit(1);
         }
-        ht_item* item = create_item(key);
-        table->items[index] = item;
+        strcpy(table->items[index]->key, key);
+        table->items[index]->value++;
         table->count++;
     }
     else {
-        if (strcmp(exist_item->key, key) != 0) {
+        if (strcmp(table->items[index]->key, key) != 0) {
             puts("COLLISION IN HASH TABLE!");
-            printf("word exists %s, new word %s hash %lu\n", exist_item->key, key, index);
+            printf("word exists %s, new word %s hash %lu\n", table->items[index]->key, key, index);
             table->collisions++;
             // free_h_table(table);
             // exit(1);
-        }  else {
-            exist_item->value++;
+        }  
+        else {
+            table->items[index]->value++;
         }
         
     }
@@ -142,10 +150,11 @@ void insert_h_item(h_table* table, char* key) {
 
 void print_h_table(h_table* table) {
     int words_count = 0;
+    // exit(1);
     for (size_t i = 0; i < table->size; i++) {
-        ht_item* item = table->items[i];
-        if (item != NULL) {
+        if (table->items[i]->value != 0) {
             words_count++;
+            
         }
     }
     puts("------ STATISTICS -------");
@@ -164,9 +173,8 @@ void print_h_table(h_table* table) {
     int clean_counter = 0;
 
     for (size_t k = 0; k < table->size; k++){
-        ht_item* item = table->items[k];
-        if (item != NULL) {
-            words[clean_counter]=item;
+        if (table->items[k]->value != 0) {
+            words[clean_counter] = table->items[k];
             clean_counter++;
         }
     }
@@ -250,6 +258,7 @@ int main(int argc, char* argv[]) {
 
     FILE *fpin, *fpout, *fptemp;
     char* CUR_FILE_NAME = argv[1];
+    // char* CUR_FILE_NAME = "./files/test.txt";
     char* TEMP_FILE_NAME = "./1.txt";
 
     if ((fpin=fopen(CUR_FILE_NAME, "rb") ) == NULL) {
@@ -286,9 +295,9 @@ int main(int argc, char* argv[]) {
     fsize = getFileSize(fptemp);
 
     h_table* hashtable = create_table(table_size);
+    
     char word[out_size];
     int result;
-
     while(1) {
         result = fscanf(fptemp, "%s", word);
         if (result < 1) break;
@@ -298,8 +307,9 @@ int main(int argc, char* argv[]) {
     remove(TEMP_FILE_NAME);
     
     puts("printing...");
+    
     print_h_table(hashtable);
-    free(hashtable);
+    free_h_table(hashtable);
 
     return 0;
 }
