@@ -12,7 +12,7 @@ typedef struct HT_ITEM ht_item;
 typedef struct HASH_TABLE h_table;
 
 //-------- config --------
-const unsigned long init_table_size = 128;
+const unsigned long init_table_size = 32; //please use power of 2
 const int table_fill_limit_percent = 75;
 //------------------------
 
@@ -124,29 +124,9 @@ h_table *create_table(unsigned long size) {
 
     table->size = size;
     table->count = 0;
-    table->collisions = 0;
     table->realloc_count = 0;
 
     return table;
-}
-
-void expand_table(h_table *table, const unsigned long *block_size) {
-
-    ht_item **items = realloc(table->items, (table->size + *block_size) * sizeof(ht_item *));
-    if (!items) {
-        puts("error allocating dynamic message for item of hash table");
-        exit(1);
-    }
-    for (unsigned long x=table->size; x<(table->size + *block_size); x++) {
-        items[x] = malloc(sizeof(struct HT_ITEM));
-        if (!items[x]) {
-            puts("error allocating dynamic message for item of hash table");
-            exit(1);
-        }
-        items[x] = create_item("");
-    }
-    table->items = items;
-    table->size += *block_size;
 }
 
 void free_h_table(h_table* table) {
@@ -157,30 +137,29 @@ void free_h_table(h_table* table) {
     free(table);
 }
 
-void rellocate_table(h_table *table, unsigned long *mod, unsigned long *old_size) {
-    unsigned long step = 0;
-    unsigned long index;
-    unsigned long hash;
-    int inserted = 0;
+void transfer_elemets(h_table *oldtable, h_table *newtable, unsigned long *mod) {
     int cur_value;
-    for (unsigned long x=0; x<*old_size; x++) {
-        if (table->items[x]->value != 0) {
-            char* cur_key = (char* ) malloc(strlen(table->items[x]->key) + 1);
+    unsigned long hash;
+    unsigned long step = 0;
+    int inserted = 0;
+    unsigned long index;
+    for (unsigned long x=  0; x < oldtable->size; x++) {
+        if (oldtable->items[x]->value != 0) {
+            char* cur_key = (char* ) malloc(strlen(oldtable->items[x]->key) + 1);
             if (!cur_key) {
                 puts("realloc error malloc for temp key");
-                free_h_table(table);
+                free_h_table(oldtable);
+                free_h_table(newtable);
                 exit(1);
             }
-            strcpy(cur_key, table->items[x]->key);
-            cur_value = table->items[x]->value;
-            strcpy(table->items[x]->key, "");
-            table->items[x]->value = 0;
+            strcpy(cur_key, oldtable->items[x]->key);
+            cur_value = oldtable->items[x]->value;
             hash = get_hash(cur_key, strlen(cur_key));
             while (!inserted || step > (*mod - 1) ) {
                 index = get_index(&hash, &step, mod);
-                if (table->items[index]->value == 0) {
-                    strcpy(table->items[index]->key, cur_key);
-                    table->items[index]->value = cur_value;
+                if (newtable->items[index]->value == 0) {
+                    strcpy(newtable->items[index]->key, cur_key);
+                    newtable->items[index]->value = cur_value;
                     inserted = 1;
                 }
                 else {
@@ -191,9 +170,8 @@ void rellocate_table(h_table *table, unsigned long *mod, unsigned long *old_size
             free(cur_key);
         }
         step = 0;
-        
     }
-    table->realloc_count++;
+    newtable->realloc_count = oldtable->realloc_count + 1;
 }
 
 void insert_h_item(h_table *table, char *key, unsigned long *mod) {
@@ -202,7 +180,7 @@ void insert_h_item(h_table *table, char *key, unsigned long *mod) {
     unsigned long index;
     int inserted = 0;
     hash = get_hash(key, strlen(key));
-    while (!inserted || step > (*mod - 1) ) {
+    while ((!inserted) && (step < (*mod - 1)) ) {
         index = get_index(&hash, &step, mod);
         if (table->items[index]->value == 0) {
             strcpy(table->items[index]->key, key);
@@ -212,7 +190,6 @@ void insert_h_item(h_table *table, char *key, unsigned long *mod) {
         }
         else {
             if (strcmp(table->items[index]->key, key) != 0) {
-                table->collisions++;
                 step++;
             }
             else {
@@ -230,15 +207,13 @@ void insert_h_item(h_table *table, char *key, unsigned long *mod) {
 
 void print_h_table(h_table* table) {
     int words_count = 0;
-    // exit(1);
     for (size_t i = 0; i < table->size; i++) {
         if (table->items[i]->value != 0) {
             words_count++;
         }
     }
     puts("------ STATISTICS -------");
-    printf("words counted %d\n", words_count);
-    printf("resolved collisions count %d\n", table->collisions);
+    printf("uniquie words count - %d\n", words_count);
     printf("hash table was expanded %d times\n", table->realloc_count);
     puts("------ WORDS COUNTS -------");
 
@@ -314,8 +289,9 @@ int main(int argc, char* argv[]) {
     char *istr;
 
     unsigned long mod = get_prime_mod(init_table_size);
-    unsigned long oldsize;
+    // unsigned long oldsize;
     h_table* hashtable = create_table(init_table_size);
+    h_table* newtable;
 
     while (fgets(buff, sizeof(buff), fpin) != 0) {
         istr = strtok (buff,sep);
@@ -323,10 +299,11 @@ int main(int argc, char* argv[]) {
         {
             if (strcmp(istr, "\x0d") != 0) {
                 if (hashtable->count >= (hashtable->size * table_fill_limit_percent / 100.0)) {
-                    oldsize = hashtable->size;
-                    expand_table(hashtable, &init_table_size);
-                    mod = get_prime_mod(hashtable->size);
-                    rellocate_table(hashtable, &mod, &oldsize);
+                    newtable = create_table(hashtable->size * 2);
+                    mod = get_prime_mod(newtable->size);
+                    transfer_elemets(hashtable, newtable, &mod);
+                    free_h_table(hashtable);
+                    hashtable = newtable;
                 }
                 insert_h_item(hashtable, istr, &mod);
             }
@@ -336,6 +313,5 @@ int main(int argc, char* argv[]) {
     fclose(fpin);
     print_h_table(hashtable);
     free_h_table(hashtable);
-
     return 0;
 }
