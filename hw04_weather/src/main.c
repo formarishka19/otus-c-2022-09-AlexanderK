@@ -3,7 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <curl/curl.h>
-#include "static/cJSON.h"
+#include "cJSON.h"
 
 #define DESC_CONCAT(x, y) if (x == NULL || !strcmp(x, y)) { x = y; } else {strcat(strcat(x, ", "), y);}
 typedef struct weather_period wp;
@@ -208,7 +208,11 @@ int main(int argc, char* argv[]) {
         free(evening);
         free(night);
         curl_easy_cleanup(curl);
-  }
+    }
+    else {
+        puts("Something went wrong with CURL library");
+        exit(1);
+    }
  
   curl_global_cleanup();
 

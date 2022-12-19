@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.2 FATAL_ERROR)
+project(weather)
+set(BINARY_DIR "${CMAKE_BINARY_DIR}")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${BINARY_DIR}/bin")
+add_subdirectory(static)
+add_subdirectory(src)

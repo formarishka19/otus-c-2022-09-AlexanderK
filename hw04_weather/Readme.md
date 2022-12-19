@@ -4,13 +4,10 @@
 - libcurl
 - cJSON
 
-## Компиляция
+## Компиляция и запуск (программа принимает единственный аргумент - наименование локации)
 ```sh
-gcc -L./lib/ -lcurl -o weather main.c -Wall -Wextra -Wpedantic -std=c11 ./static/libcjson.a
-```
-
-## Запуск (программа принимает единственный аргумент - наименование локации)
-Пример:
-```sh
-./weather Miami
+cd ./build
+cmake ..
+make
+./bin/weather Miami
 ```
