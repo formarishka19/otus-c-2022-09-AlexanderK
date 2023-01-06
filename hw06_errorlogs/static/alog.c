@@ -35,9 +35,11 @@ void alog_init(char* log_filename) {
         exit(-2);
     }
     char* ts = malloc(TIMESTAMP_LEN * sizeof(char));
-    make_timestamp(ts);
-    fputs(ts, log_file_ptr);
-    free(ts);
+    if (ts) {
+        make_timestamp(ts);
+        fputs(ts, log_file_ptr);
+        free(ts);
+    }
     fputs("Logging started\n", log_file_ptr);
 }
 
@@ -47,25 +49,27 @@ void alog(
 	long line, int level, char* msg) {
         int line_len = snprintf(NULL, 0, "%lu", line);
         char* ts = malloc(TIMESTAMP_LEN * sizeof(char));
-        char* line_str = malloc(line_len + 1);
-        if (!ts || !line_str) {
-            fputs("Log record memory error\n", log_file_ptr);
+        if (ts) {
+            make_timestamp(ts);
+            fputs(ts, log_file_ptr);
+            free(ts);
         }
-        make_timestamp(ts);
-        fputs(ts, log_file_ptr);
-        free(ts);
-
         if (level >= 0 && level <= levels_count) {
             fputs(levels[level], log_file_ptr);
         };
         fputs(" ", log_file_ptr);
-        
-        snprintf(line_str, line_len + 1, "%lu", line);
         fputs(file, log_file_ptr);
         fputs("  func: ", log_file_ptr);
         fputs(func, log_file_ptr);
-        fputs(" in line ", log_file_ptr);
-        fputs(line_str, log_file_ptr);
+        char* line_str = malloc(line_len + 1);
+        if (!line_str) {
+            fputs("Log record memory error\n", log_file_ptr);
+        } 
+        else {
+            snprintf(line_str, line_len + 1, "%lu", line);
+            fputs(" in line ", log_file_ptr);
+            fputs(line_str, log_file_ptr);
+        };
         fputs(" -- ", log_file_ptr);
         fputs(msg, log_file_ptr);
         fputs(" -- ", log_file_ptr);
@@ -92,9 +96,11 @@ void alog(
 
 void alog_fin(void) {
     char* ts = malloc(TIMESTAMP_LEN * sizeof(char));
-    make_timestamp(ts);
-    fputs(ts, log_file_ptr);
-    free(ts);
+    if (ts) {
+        make_timestamp(ts);
+        fputs(ts, log_file_ptr);
+        free(ts);
+    }
     fputs("Logging finished\n", log_file_ptr);
     fclose(log_file_ptr);
 }
