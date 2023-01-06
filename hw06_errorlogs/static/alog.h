@@ -3,17 +3,14 @@
 
 #include <stdlib.h>
 
-#define TIMESTAMP_FORMAT "%G-%m-%d %H:%M:%S "
-#define TIMESTAMP_LEN 20
-#define BT_BUF_SIZE 100
 
 typedef enum {
-	DEBUG = 20,
-	INFO = 40,
-	NOTICE = 60,
-	WARN = 80,
-	ERROR = 100,
-	FATAL = 120
+	DEBUG,
+	INFO,
+	NOTICE,
+	WARN,
+	ERROR,
+	FATAL
 } alog_level;
 
 // proto

@@ -5,7 +5,21 @@
 #include <time.h>
 #include <execinfo.h>
 
-extern FILE* log_file_ptr;
+
+#define TIMESTAMP_FORMAT "%G-%m-%d %H:%M:%S "
+#define TIMESTAMP_LEN 21
+#define BT_BUF_SIZE 100
+
+static FILE* log_file_ptr = NULL;
+static char* levels[] = {
+    "DEBUG",
+	"INFO",
+	"NOTICE",
+	"WARN",
+	"ERROR",
+	"FATAL"
+};
+static int levels_count = 6;
 
 static void make_timestamp(char *buffer){
    time_t rawtime;
@@ -25,8 +39,6 @@ void alog_init(char* log_filename) {
     fputs(ts, log_file_ptr);
     free(ts);
     fputs("Logging started\n", log_file_ptr);
-    fputs("-------------------------------\n", log_file_ptr);
-    
 }
 
 void alog(
@@ -43,32 +55,12 @@ void alog(
         fputs(ts, log_file_ptr);
         free(ts);
 
-        switch (level)
-        {
-        case DEBUG:
-            fputs("DEBUG ", log_file_ptr);
-            break;
-        case INFO:
-            fputs("INFO ", log_file_ptr);
-            break;
-        case NOTICE:
-            fputs("NOTICE ", log_file_ptr);
-            break;
-        case WARN:
-            fputs("WARN ", log_file_ptr);
-            break;
-        case ERROR:
-            fputs("ERROR ", log_file_ptr);
-            break;
-        case FATAL:
-            fputs("FATAL ", log_file_ptr);
-            break;
-        default:
-            break;
-        }
+        if (level >= 0 && level <= levels_count) {
+            fputs(levels[level], log_file_ptr);
+        };
+        fputs(" ", log_file_ptr);
         
         snprintf(line_str, line_len + 1, "%lu", line);
-
         fputs(file, log_file_ptr);
         fputs("  func: ", log_file_ptr);
         fputs(func, log_file_ptr);
@@ -99,7 +91,6 @@ void alog(
     }
 
 void alog_fin(void) {
-    fputs("-------------------------------\n", log_file_ptr);
     char* ts = malloc(TIMESTAMP_LEN * sizeof(char));
     make_timestamp(ts);
     fputs(ts, log_file_ptr);

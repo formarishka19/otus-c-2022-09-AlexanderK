@@ -3,8 +3,6 @@
 #include <stdlib.h>
 #include "alog.h"
 
-FILE* log_file_ptr = NULL;
-
 void checkArgs(int* argc, char* argv[]) {
     if (*argc != 2) {
         printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
