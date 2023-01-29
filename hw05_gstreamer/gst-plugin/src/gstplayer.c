@@ -25,7 +25,7 @@ GST_DEBUG_CATEGORY_STATIC (gst_player_debug);
 
 #define WAV_HEADER_SIZE 44
 
-struct wav_header_struct {
+typedef struct wav_header_struct {
     char chunk_id[4];
     uint32_t chunk_size;
     char format[4];
@@ -39,12 +39,8 @@ struct wav_header_struct {
     uint16_t bits_per_sample;
     char subchunk2_id[4];
     uint32_t subchunk2_size;
-};
+} header;
 
-union header_data {
-    gchar data[WAV_HEADER_SIZE];
-    struct wav_header_struct header;
-};
 
 /* Filter signals and args */
 enum
@@ -177,13 +173,10 @@ static gboolean gst_player_start(GstBaseSrc* src)
   Gstplayer *element = GST_PLAYER(src);
   
   if (g_file_get_contents(element->location, &element->contents, NULL, NULL)) {
-    union header_data *header_bytes = (union header_data *) malloc(sizeof(union header_data));
-    for (int i = 0; i < WAV_HEADER_SIZE; i++) {
-        header_bytes->data[i] = element->contents[i];
-    }
-    element->audiosize = header_bytes->header.subchunk2_size;
-    gst_base_src_set_blocksize (src, (guint)header_bytes->header.byte_rate);
-    free(header_bytes);
+    header wav_h;
+    memcpy(&wav_h, element->contents, WAV_HEADER_SIZE);
+    element->audiosize = wav_h.subchunk2_size;
+    gst_base_src_set_blocksize (src, (guint)wav_h.byte_rate);
   } 
   else {
     g_print("Error reading file %s\n", element->location);

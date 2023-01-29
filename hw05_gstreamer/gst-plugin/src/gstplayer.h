@@ -2,6 +2,7 @@
 #define __GST_PLAYER_H__
 
 #include <gst/gst.h>
+#include <stdint.h>
 
 G_BEGIN_DECLS
 
