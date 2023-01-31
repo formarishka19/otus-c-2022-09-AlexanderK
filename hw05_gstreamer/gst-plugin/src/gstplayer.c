@@ -19,7 +19,7 @@
 #include <gst/gst.h>
 #include <gst/base/gstbasesrc.h>
 #include "gstplayer.h"
-#include <stdio.h>
+// #include <stdio.h>
 
 GST_DEBUG_CATEGORY_STATIC (gst_player_debug);
 #define GST_CAT_DEFAULT gst_player_debug
