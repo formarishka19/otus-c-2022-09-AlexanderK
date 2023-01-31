@@ -19,11 +19,13 @@
 #include <gst/gst.h>
 #include <gst/base/gstbasesrc.h>
 #include "gstplayer.h"
+#include <stdio.h>
 
 GST_DEBUG_CATEGORY_STATIC (gst_player_debug);
 #define GST_CAT_DEFAULT gst_player_debug
 
 #define WAV_HEADER_SIZE 44
+#define MAX_DATA_SIZE (element->audiosize + WAV_HEADER_SIZE + src->blocksize)
 
 typedef struct wav_header_struct {
     char chunk_id[4];
@@ -203,7 +205,10 @@ static GstFlowReturn gst_player_create(GstBaseSrc* src, guint64 offset, guint si
     if (offset >= element->audiosize + WAV_HEADER_SIZE) {
       return GST_FLOW_EOS;
     }
-    GstMemory* memory = gst_memory_new_wrapped(0, element->contents, element->audiosize + WAV_HEADER_SIZE + src->blocksize, WAV_HEADER_SIZE + offset, src->blocksize, NULL, NULL);
+    printf("offset: %lld \n", offset);
+    printf("size: %d \n", size);
+    // GstMemory* memory = gst_memory_new_wrapped(0, element->contents, element->audiosize + WAV_HEADER_SIZE + src->blocksize, WAV_HEADER_SIZE + offset, src->blocksize, NULL, NULL);
+    GstMemory* memory = gst_memory_new_wrapped(0, element->contents, MAX_DATA_SIZE, WAV_HEADER_SIZE + offset, MIN(((element->audiosize + WAV_HEADER_SIZE) - offset), src->blocksize), NULL, NULL);
     if(!memory) {
       g_print("memory allocation error\n");
       return GST_FLOW_ERROR;
