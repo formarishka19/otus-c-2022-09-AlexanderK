@@ -1,0 +1,34 @@
+--- clib-package.c	2020-09-08 02:51:24.000000000 +0300
++++ clib-package-fix.c	2023-01-31 19:04:18.000000000 +0300
+@@ -754,9 +754,10 @@
+     json = NULL;
+     res = NULL;
+   } else {
+-    free(json);
++    // free(json);
+     json = NULL;
+   }
++  free(json);
+ 
+   return pkg;
+ 
+@@ -1002,6 +1003,7 @@
+   *status = rc;
+   (void)data->pkg->refs--;
+   pthread_exit((void *)status);
++  free(status);
+   return (void *)rc;
+ }
+ #endif
+@@ -1380,7 +1382,10 @@
+ #ifdef HAVE_PTHREADS
+     pthread_mutex_lock(&lock.mutex);
+ #endif
+-    hash_set(visited_packages, strdup(pkg->name), "t");
++    char* fix_str;
++    fix_str = strdup(pkg->name);
++    hash_set(visited_packages, fix_str, "t");
++    free(fix_str);
+ #ifdef HAVE_PTHREADS
+     pthread_mutex_unlock(&lock.mutex);
+ #endif
