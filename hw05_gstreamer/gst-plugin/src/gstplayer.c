@@ -205,8 +205,8 @@ static GstFlowReturn gst_player_create(GstBaseSrc* src, guint64 offset, guint si
     if (offset >= element->audiosize + WAV_HEADER_SIZE) {
       return GST_FLOW_EOS;
     }
-    printf("offset: %lld \n", offset);
-    printf("size: %d \n", size);
+    // printf("offset: %lld \n", offset);
+    // printf("size: %d \n", size);
     // GstMemory* memory = gst_memory_new_wrapped(0, element->contents, element->audiosize + WAV_HEADER_SIZE + src->blocksize, WAV_HEADER_SIZE + offset, src->blocksize, NULL, NULL);
     GstMemory* memory = gst_memory_new_wrapped(0, element->contents, MAX_DATA_SIZE, WAV_HEADER_SIZE + offset, MIN(((element->audiosize + WAV_HEADER_SIZE) - offset), src->blocksize), NULL, NULL);
     if(!memory) {
