@@ -1,7 +1,7 @@
 # Фикс на утечку памяти
 
 ## Применение
-В папки clib:
+В папке clib:
 ```sh
 cd ./src/common
 patch < fix.diff 
