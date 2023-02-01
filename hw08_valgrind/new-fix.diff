@@ -1,0 +1,23 @@
+--- clib-package.c	2020-09-08 02:51:24.000000000 +0300
++++ clib-package-fixed.c	2023-02-01 12:35:48.000000000 +0300
+@@ -754,9 +754,10 @@
+     json = NULL;
+     res = NULL;
+   } else {
+-    free(json);
++    // free(json);
+     json = NULL;
+   }
++  free(json);
+ 
+   return pkg;
+ 
+@@ -1376,7 +1377,7 @@
+     }
+   }
+ 
+-  if (pkg->name) {
++  if (pkg->name && !hash_has(visited_packages, pkg->name)) {
+ #ifdef HAVE_PTHREADS
+     pthread_mutex_lock(&lock.mutex);
+ #endif

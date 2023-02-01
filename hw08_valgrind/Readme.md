@@ -4,7 +4,7 @@
 В папке clib:
 ```sh
 cd ./src/common
-patch < fix.diff 
+patch < new-fix.diff 
 ```
 Пропатчится файл clib-package.c
 
