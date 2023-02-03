@@ -24,7 +24,6 @@ set(libsrc
 
 set(libname "libconfig")
 
-
 add_library(${libname} ${libsrc} ${libinc})
 
 target_include_directories(libconfig INTERFACE .)
