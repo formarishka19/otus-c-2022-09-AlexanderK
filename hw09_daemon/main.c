@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <signal.h>
 #include <syslog.h>
 #include <fcntl.h>
@@ -9,11 +10,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <string.h>
 #include "libconfig.h"
 
 #define APP_NAME "FILE_DAEMON"
 #define U_SOCKET_NAME "check_fsize.socket"
+#define DEFAULT_CFG_FILE "/home/otus/hw09_daemon/cfg/daemon.cfg"
 #define GREETING "Здравствуйте, введите команды check для получения размера файла или stop для завершения работы сервера\n"
 #define FILE_SIZE_MSG "Размер отслеживаемого файла (байт): "
 #define REPEATE_MSG "Получена неизвестная команда. Повторите ввод (ckeck или stop).\n"
@@ -35,14 +36,11 @@ void checkArgs(int* argc, char* argv[]) {
 }
 
 size_t getFileSize(char* filename) {
-    FILE *fpin;
-    if ((fpin=fopen(filename, "rb") ) == NULL) {
-        syslog(LOG_ERR, "Error opening file %s. Exiting...", filename);
-        return(0);
-    }
+
     struct stat finfo;
-    if (!fstat(fileno(fpin), &finfo)) {
-        fclose(fpin);
+    int status;
+    status = stat(filename, &finfo);
+    if(status == 0) {
         return finfo.st_size;
     }
     else {
@@ -50,6 +48,7 @@ size_t getFileSize(char* filename) {
         syslog(LOG_ERR, "Cannot get file info %s", filename);
         return(0);
     }
+
 }
 
 char* getFileName(char* config_file) {
@@ -60,9 +59,13 @@ char* getFileName(char* config_file) {
     if(! config_read_file(&cfg, config_file))
     {
         syslog(LOG_ERR, "Ошибка чтения конфигурации %s:%d - %s", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
-        config_destroy(&cfg);
-        free(filename_res);
-        exit(EXIT_FAILURE);
+        syslog(LOG_ERR, "Пробуем запустить дефолтную конфигурацию %s", DEFAULT_CFG_FILE);
+        if(! config_read_file(&cfg, DEFAULT_CFG_FILE)) {
+            syslog(LOG_ERR, "Ошибка чтения дефолтной конфигурации %s:%d - %s", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
+            config_destroy(&cfg);
+            free(filename_res);
+            exit(EXIT_FAILURE);
+        }
     }
     
     if(config_lookup_string(&cfg, "file", &filename)) {
@@ -178,7 +181,8 @@ void socket_listen(char* filename) {
         else {
             send(msgsock, greeting, strlen(greeting), 0);
             do {
-                bzero(buf, sizeof(buf));
+                // bzero(buf, sizeof(buf));
+                memset(buf, 0 , sizeof(buf));
                 if ((rval = read(msgsock, buf, 100)) < 0) {
                     syslog(LOG_WARNING, "Невозможно прочитать входящее сообщение");
                 }

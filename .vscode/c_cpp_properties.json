@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Mac",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/usr/local/Cellar/**",
+                "/usr/local/Cellar/gstreamer/1.20.4/include/gstreamer-1.0",
+                "/usr/local/Cellar/glib/2.74.3/include/glib-2.0",
+                "/usr/local/include/gstreamer-1.0",
+                "/usr/local/Cellar/glib/2.74.3/lib/glib-2.0/include"
+            ],
+            "defines": [],
+            "macFrameworkPath": [],
+            "compilerPath": "/usr/local/bin/gcc-11",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "macos-gcc-x64",
+            "configurationProvider": "ms-vscode.makefile-tools"
+        }
+    ],
+    "version": 4
+}
