@@ -17,8 +17,22 @@
 #define GREETING "Здравствуйте, введите команды check для получения размера файла или stop для завершения работы сервера\n"
 #define FILE_SIZE_MSG "Размер отслеживаемого файла (байт): "
 #define REPEATE_MSG "Получена неизвестная команда. Повторите ввод (ckeck или stop).\n"
-#define NOFILE_MSG "Не могу найти файл. Останавливаю сервер"
+#define NOFILE_MSG "Не могу найти файл. Останавливаю сервер\n"
 
+void checkArgs(int* argc, char* argv[]) {
+    if (*argc < 2 || *argc > 3) {
+        printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
+        "Программа принимает на вход один аргумент - путь до файла конфигурации\nи опционально ключ -d для режима демонизации\n"
+        "------ Синтаксис ------\n"
+        "%s <cfg filepath>\n"
+        "sudo %s <cfg filepath> -d\n"
+        "-----------------------\n\n"
+        "Пример запуска\n"
+        "sudo %s /home/otus/hw09_daemon/cfg/daemon.cfg -d \n\n"
+        "--- Повторите запуск правильно ---\n\n", argv[0], argv[0], argv[0]);
+        exit (EXIT_FAILURE);
+    }
+}
 
 size_t getFileSize(char* filename) {
     FILE *fpin;
@@ -213,25 +227,24 @@ void socket_listen(char* filename) {
 }
 
 int main(int argc, char* argv[]) {
+
+    checkArgs(&argc, argv);
+    int daemon = 0;
+    if ((argc == 3) && (strcmp(argv[2], "-d\0") == 0)) {
+        daemon = 1;
+    }
+    char* CFG_FILE_NAME = argv[1];
+    (void)argc;
  
-    if (argc == 2) {
-        (void)argc;
-        argv[1] = "";
+    if (daemon) {
         daemonize(APP_NAME);
     }
-    else if (argc == 1) {
-        (void)argc;
-        printf("Программа %s была запущена в обычном режиме\n", APP_NAME);
-        printf("Имя сокета %s\n", U_SOCKET_NAME);
-        printf("nc -U %s\n", U_SOCKET_NAME);        
-    }
     else {
-        (void)argc;
-        printf("Программа %s запущена с неверным ключом. Выход.\n", APP_NAME);
-        exit(EXIT_FAILURE);
+        printf("Программа %s запущена в обычном режиме\n", APP_NAME);
+        printf("Имя сокета %s\n", U_SOCKET_NAME);
+        printf("Подключиться: nc -U %s\n", U_SOCKET_NAME);  
     }
-    
-    char* filename = getFileName("/home/otus/hw09_daemon/cfg/daemon.cfg");
+    char* filename = getFileName(CFG_FILE_NAME);
     syslog(LOG_INFO, "Открываем сокет для входящих запросов.");
     socket_listen(filename);
     syslog(LOG_INFO, "Завершение работы программы");
