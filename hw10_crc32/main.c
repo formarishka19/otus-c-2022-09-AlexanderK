@@ -55,16 +55,11 @@ const uint32_t crc32_tab[] = {
 	0xb40bbe37, 0xc30c8ea1, 0x5a05df1b, 0x2d02ef8d
 };
 
-typedef struct crc_params {
-    uint32_t cur_crc;
-} crc_p;
-
-
-void CRC32_std(const uint8_t data[], size_t data_length, crc_p* crc_p) {
+void CRC32_std(const uint8_t data[], size_t data_length, uint32_t* crc) {
 
 	for (size_t i = 0; i < data_length; i++) {
-		const uint32_t lookupIndex = (crc_p->cur_crc ^ data[i]) & 0xff;
-		crc_p->cur_crc = (crc_p->cur_crc >> 8) ^ crc32_tab[lookupIndex]; 
+		const uint32_t lookupIndex = (*crc ^ data[i]) & 0xff;
+		*crc = (*crc >> 8) ^ crc32_tab[lookupIndex]; 
 	}
 }
 
@@ -101,7 +96,7 @@ int main(int argc, char* argv[]) {
     char* CUR_FILE_NAME = argv[1];
     (void)argc;
 
-    crc_p cur_crc = {0xFFFFFFFFu};
+    uint32_t cur_crc = 0xFFFFFFFFu;
     FILE *fp;
 
     size_t fsize = getFileSize(CUR_FILE_NAME);
@@ -113,7 +108,7 @@ int main(int argc, char* argv[]) {
         puts("невозможно открыть файл");
         exit (EXIT_FAILURE);
     }
-    if (fsize > (size_t) PAGE_SIZE) {
+    if (fsize < (size_t) PAGE_SIZE) {
         // этот блок использовался для сверки результатов подсчета чере mmap
         uint8_t* BUFFER = (uint8_t*) malloc(sizeof(uint8_t [fsize]));
         if (!BUFFER) {
@@ -123,23 +118,15 @@ int main(int argc, char* argv[]) {
         fread(BUFFER, sizeof(uint8_t), fsize, fp);
         fclose(fp);
         CRC32_std(BUFFER, fsize, &cur_crc);
-        cur_crc.cur_crc ^= 0xFFFFFFFFu;
         free(BUFFER);
     }
     else {
-        size_t pages = fsize / PAGE_SIZE;
-        int bytes_left = fsize - (PAGE_SIZE * pages);
-        printf("fsize %lu\n", fsize);
-        printf("pages %lu\n", pages);
-        printf("bytes_left %d\n", bytes_left);
         uint8_t* start_address = mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fp->_file, 0);
         fclose(fp);
         CRC32_std(start_address, fsize, &cur_crc);
-        cur_crc.cur_crc ^= 0xFFFFFFFFu;
         munmap(start_address, fsize);
     }
-    
-    printf("сумма crc32 файла %u\n", cur_crc.cur_crc);
-    
+    cur_crc ^= 0xFFFFFFFFu;
+    printf("сумма crc32 файла %u\n", cur_crc);
 	return EXIT_SUCCESS;
 }
