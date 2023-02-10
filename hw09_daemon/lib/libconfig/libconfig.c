@@ -628,6 +628,8 @@ int config_read_file(config_t *config, const char *filename)
 {
   int ret, ok = 0;
 
+  memset(config, 0, sizeof(config_t));
+
   FILE *stream = fopen(filename, "rt");
   if(stream != NULL)
   {

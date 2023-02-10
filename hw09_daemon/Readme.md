@@ -15,22 +15,23 @@ file  = "/home/otus/hw09_daemon/example.txt";
 ## Второй опциональный ключ -d для запуска в режиме демона
 
 ```sh
-./daemon /home/otus/hw09_daemon/cfg/daemon.cfg
+./daemon ./daemon.cfg
 ```
 или
 ```sh
-sudo ./daemon /home/otus/hw09_daemon/cfg/daemon.cfg -d 
+sudo ./daemon ./daemon.cfg -d 
 ```
+Если запуск будет произведен без ссылки на конфигурационный файл, будет применен ./daemon.cfg по умолчанию.
 
 # доступ к серверу
 в режиме демона
 ```sh
 cd /
-sudo nc -U /check_fsize.socket
+sudo nc -U check_fsize.socket
 ```
 в отладочном запуске из папки с бинарником daemon
 ```sh
-nc -U /check_fsize.socket
+nc -U check_fsize.socket
 ```
 
 ## Команды

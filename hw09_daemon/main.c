@@ -14,39 +14,39 @@
 
 #define APP_NAME "FILE_DAEMON"
 #define U_SOCKET_NAME "check_fsize.socket"
-#define DEFAULT_CFG_FILE "/home/otus/hw09_daemon/cfg/daemon.cfg"
+#define DEFAULT_CFG_FILE "./daemon.cfg"
 #define GREETING "Здравствуйте, введите команды check для получения размера файла или stop для завершения работы сервера\n"
 #define FILE_SIZE_MSG "Размер отслеживаемого файла (байт): "
 #define REPEATE_MSG "Получена неизвестная команда. Повторите ввод (ckeck или stop).\n"
 #define NOFILE_MSG "Не могу найти файл. Останавливаю сервер\n"
 
 void checkArgs(int* argc, char* argv[]) {
-    if (*argc < 2 || *argc > 3) {
+    if (*argc < 1 || *argc > 3) {
         printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
-        "Программа принимает на вход один аргумент - путь до файла конфигурации\nи опционально ключ -d для режима демонизации\n"
+        "Программа принимает на вход два опциональных аргумента - путь до файла конфигурации\nи ключ -d для режима демонизации\n"
         "------ Синтаксис ------\n"
         "%s <cfg filepath>\n"
         "sudo %s <cfg filepath> -d\n"
         "-----------------------\n\n"
         "Пример запуска\n"
-        "sudo %s /home/otus/hw09_daemon/cfg/daemon.cfg -d \n\n"
+        "sudo %s ./daemon.cfg -d \n\n"
         "--- Повторите запуск правильно ---\n\n", argv[0], argv[0], argv[0]);
         exit (EXIT_FAILURE);
     }
 }
 
-size_t getFileSize(char* filename) {
+long getFileSize(char* filename) {
 
     struct stat finfo;
     int status;
     status = stat(filename, &finfo);
     if(status == 0) {
-        return finfo.st_size;
+        return (long)finfo.st_size;
     }
     else {
         printf("Cannot get file info.\n");
         syslog(LOG_ERR, "Cannot get file info %s", filename);
-        return(0);
+        return(-1);
     }
 
 }
@@ -55,28 +55,22 @@ char* getFileName(char* config_file) {
     config_t cfg;
     const char* filename;
     char* filename_res = (char*) malloc(100 * sizeof(char));
-
+    syslog(LOG_INFO, "Пробуем запустить конфигурацию %s", config_file);
     if(! config_read_file(&cfg, config_file))
     {
         syslog(LOG_ERR, "Ошибка чтения конфигурации %s:%d - %s", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
-        syslog(LOG_ERR, "Пробуем запустить дефолтную конфигурацию %s", DEFAULT_CFG_FILE);
-        if(! config_read_file(&cfg, DEFAULT_CFG_FILE)) {
-            syslog(LOG_ERR, "Ошибка чтения дефолтной конфигурации %s:%d - %s", config_error_file(&cfg), config_error_line(&cfg), config_error_text(&cfg));
-            config_destroy(&cfg);
-            free(filename_res);
-            exit(EXIT_FAILURE);
-        }
+        config_destroy(&cfg);
+        exit(EXIT_FAILURE);
     }
     
     if(config_lookup_string(&cfg, "file", &filename)) {
         syslog(LOG_INFO, "Имя отслеживаемого файла: %s", filename);
-        strcpy(filename_res, filename);
+        strncpy(filename_res, filename, strlen(filename));
         config_destroy(&cfg);
     }
     else {
         syslog(LOG_ERR, "Параметр 'file' не найден в конфигурации %s", config_file);
         config_destroy(&cfg);
-        free(filename_res);
         exit(EXIT_FAILURE);
     }
     return filename_res;
@@ -127,9 +121,9 @@ void daemonize(const char* cmd)
      * Назначить корневой каталог текущим рабочим каталогом,
      * чтобы впоследствии можно было отмонтировать файловую систему.
      */
-    if (chdir("/") < 0) {
-        syslog(LOG_CRIT, "невозможно сделать текущим рабочим каталогом /");
-    }
+    // if (chdir("/") < 0) {
+    //     syslog(LOG_CRIT, "невозможно сделать текущим рабочим каталогом /");
+    // }
     /*
      * Закрыть все открытые файловые дескрипторы.
      */
@@ -200,10 +194,10 @@ void socket_listen(char* filename) {
                         return;
                     } else if (!strncmp(buf, "check", 5)) {
                         syslog(LOG_INFO, "Получена запрос на проверку размера файла");
-                        size_t fsize = getFileSize(filename);
-                        if (fsize) {
+                        long fsize = getFileSize(filename);
+                        if (fsize > -1) {
                             char str[10];
-                            sprintf(str, "%lu", fsize);
+                            sprintf(str, "%ld", fsize);
                             send(msgsock, filesize, strlen(filesize), 0);
                             send(msgsock, str, strlen(str), 0);
                             send(msgsock, "\n", 1, 0);
@@ -233,13 +227,22 @@ void socket_listen(char* filename) {
 int main(int argc, char* argv[]) {
 
     checkArgs(&argc, argv);
+    char*  CFG_FILE_NAME = DEFAULT_CFG_FILE;
     int daemon = 0;
     if ((argc == 3) && (strcmp(argv[2], "-d\0") == 0)) {
         daemon = 1;
+        CFG_FILE_NAME = argv[1];
     }
-    char* CFG_FILE_NAME = argv[1];
+    if ((argc == 2) && (strcmp(argv[1], "-d\0") == 0)) {
+        daemon = 1;
+    }
+    else if ((argc == 2) && (strcmp(argv[1], "-d\0") != 0)) {
+        CFG_FILE_NAME = argv[1];
+    }
+    
     (void)argc;
- 
+    
+    char* filename = getFileName(CFG_FILE_NAME);
     if (daemon) {
         daemonize(APP_NAME);
     }
@@ -248,9 +251,10 @@ int main(int argc, char* argv[]) {
         printf("Имя сокета %s\n", U_SOCKET_NAME);
         printf("Подключиться: nc -U %s\n", U_SOCKET_NAME);  
     }
-    char* filename = getFileName(CFG_FILE_NAME);
+    
     syslog(LOG_INFO, "Открываем сокет для входящих запросов.");
     socket_listen(filename);
     syslog(LOG_INFO, "Завершение работы программы");
+    free(filename);
 	return 0;
 }
