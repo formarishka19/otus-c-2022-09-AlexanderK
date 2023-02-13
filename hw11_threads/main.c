@@ -6,13 +6,28 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <glib.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 typedef struct { 
-    char data[1000];
+    char data[10000];
     size_t len;
 } buffer;
 
-//LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-agent}i\"" combined
+typedef struct { 
+    char url[10000];
+    size_t count;
+} record;
+
+
+int compare(const void *a, const void *b) {
+  
+    record* recordA = (record*)a;
+    record* recordB = (record*)b;
+  
+    return (recordB->count - recordA->count);
+}
 
 size_t getFileSize(char* filename) {
     struct stat finfo;
@@ -45,68 +60,117 @@ int main(int argc, char* argv[]) {
 
     // checkArgs(&argc, argv);
     // char* CUR_FILE_NAME = argv[1];
-    char* CUR_FILE_NAME = "./log.txt";
+    char CUR_FILE_NAME[200] = "";
+    char CUR_DIR[200] = "/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/logs/logs/";
     (void)argc;
 
     FILE *fp;
-
-    size_t fsize = getFileSize(CUR_FILE_NAME);
-    if (fsize == 0) {
-        puts("Размер проверяемого файла 0");
-        exit(EXIT_FAILURE);
-    }
-    if ((fp = fopen(CUR_FILE_NAME, "rb")) == NULL) {
-        puts("невозможно открыть файл");
-        exit (EXIT_FAILURE);
-    }
-   
+    DIR *dp;
+    struct dirent *ep;     
+    dp = opendir(CUR_DIR);
     buffer temp_buffer;
-    memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
-    temp_buffer.len = 0;
-    
-    uint8_t* start_address = mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fp->_file, 0);
-    fclose(fp);
+    int r_count = 0;
+    record* cur_record = NULL;
+    uint8_t* start_address;
+    GHashTable* hash_table = g_hash_table_new(g_str_hash, NULL);
+    record* r_array = malloc(1000000000 * sizeof(record));
+    char* istr;
+    char url[10000];
+    char stats[50];
+    char ref[10000];
+    char ua[1000];
+    int x;
     size_t i = 0;
-    // char sep[1]="\"";
-    char *istr;
-    while (*(start_address + i*sizeof(uint8_t)) != '\n' && i < fsize) {
-        temp_buffer.data[i] =  *(start_address + i*sizeof(uint8_t));
-        i++;
-    }
-    temp_buffer.data[i] = '\0';
-    temp_buffer.len = i;
-    munmap(start_address, fsize);
-    // for (int k = 0; k < temp_buffer.len; k++) {
-    //     printf("%c", temp_buffer.data[k]);
-    // }
-    // puts("");
-    int x = 0;
-    istr = strtok(temp_buffer.data, "\"");
-    while (istr != NULL)
+    size_t k = 0;
+
+    if (!dp)
     {
-        switch (x)
-        {
-        case 1:
-            printf("URL: \n%s\n\n", istr);
-            break;
-        case 2:
-            printf("Statistics: \n%s\n\n", istr);
-            break;
-        case 3:
-            printf("Referer: \n%s\n\n", istr);
-            break;
-        case 5:
-            printf("User Agent: \n%s\n\n", istr);
-            break;
-        default:
-            break;
-        }
-        // puts(istr);
-        x++;
-        istr = strtok(NULL,"\"");
+        puts("Couldn't open the directory");
+        printf("Couldn't open the directory %s\n", CUR_DIR);
+        return EXIT_FAILURE;
     }
+    while ((ep = readdir(dp)) != NULL) {
+        if (strcmp(ep->d_name, ".") != 0 && strcmp(ep->d_name, "..") != 0) {
+            strncpy(CUR_FILE_NAME, CUR_DIR, sizeof(CUR_DIR));
+            strcat(CUR_FILE_NAME, ep->d_name);
+            size_t fsize = getFileSize(CUR_FILE_NAME);
+            if (fsize == 0) {
+                printf("Размер проверяемого файла %s 0\n", CUR_FILE_NAME);
+                exit(EXIT_FAILURE);
+            }
+            if ((fp = fopen(CUR_FILE_NAME, "rb")) == NULL) {
+                printf("невозможно открыть файл %s\n", CUR_FILE_NAME);
+                exit(EXIT_FAILURE);
+            }
+            start_address = mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fp->_file, 0);
+            fclose(fp);
+            printf("%s file mapped\n", CUR_FILE_NAME);
+            i = 0;
+            k = 0;
+            memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
+            temp_buffer.len = 0;
+            while (i < fsize) {
+                if (*(start_address + i*sizeof(uint8_t)) != '\n' && i != fsize - 1) {
+                    temp_buffer.data[k] =  *(start_address + i*sizeof(uint8_t));
+                    k++;
+                } 
+                else {
+                    temp_buffer.data[k + 1] = '\0';
+                    temp_buffer.len = k + 1;
+                    k = 0;
+                    x = 0;
+                    istr = strtok(temp_buffer.data, "\"");
+                    while (istr != NULL)
+                    {
+                        switch (x)
+                        {
+                        case 1:
+                            strncpy(url, istr, strlen(istr)+1);
+                            break;
+                        case 2:
+                            strncpy(stats, istr, strlen(istr)+1);
+                            break;
+                        case 3:
+                            strncpy(ref, istr, strlen(istr)+1);
+                            break;
+                        case 5:
+                            strncpy(ua, istr, strlen(istr)+1);
+                            break;
+                        default:
+                            break;
+                        }
+                        x++;
+                        istr = strtok(NULL,"\"");
 
-    // free(temp_buffer.data);
-
+                    }
+                    if (g_hash_table_contains(hash_table, url)) {
+                        cur_record = (record*)g_hash_table_lookup(hash_table, url);
+                        cur_record->count = cur_record->count + 1;
+                    }
+                    else {
+                        strncpy(r_array[r_count].url, url, sizeof(url));
+                        r_array[r_count].count = 1;
+                        g_hash_table_insert(hash_table, (gpointer)url, (gpointer)&r_array[r_count]);
+                        r_count++;
+                    }
+                    memset(&url[0], 0, sizeof(url));
+                    cur_record = NULL;
+                    memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
+                    temp_buffer.len = 0;
+                }
+                i++;
+            }
+            munmap(start_address, fsize);
+        }
+    }
+    g_hash_table_destroy(hash_table);
+    r_count--;
+    printf("elements %d\n", r_count);
+    qsort(r_array, r_count, sizeof(record), compare);
+    for (int t=0; t<10; t++) {
+        printf("URL %s - total %ld\n", r_array[t].url, r_array[t].count);
+    }
+    free(r_array);
+    (void) closedir (dp);
 	return EXIT_SUCCESS;
 }
