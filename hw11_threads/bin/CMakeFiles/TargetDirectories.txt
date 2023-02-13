@@ -1,3 +1,0 @@
-/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/bin/CMakeFiles/parse.dir
-/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/bin/CMakeFiles/edit_cache.dir
-/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/bin/CMakeFiles/rebuild_cache.dir
