@@ -10,21 +10,22 @@
 #include <sys/types.h>
 #include <dirent.h>
 
-typedef struct { 
-    char data[10000];
-    size_t len;
-} buffer;
+#define MAX_URL_LEN 10000
+#define MAX_USERAGENT_LEN 1000
+#define MAX_LOGENTRY_LEN 10000
+#define MAX_LOG_ENTRIES 1000000000
+#define MAX_FILEPATH_LEN 1000
 
 typedef struct { 
-    char url[10000];
+    char url[MAX_URL_LEN];
     size_t count;
 } record;
 
 typedef struct {
-    char url[10000];
+    char url[MAX_URL_LEN];
     char stats[50];
-    char ref[10000];
-    char ua[1000];
+    char ref[MAX_URL_LEN];
+    char ua[MAX_USERAGENT_LEN];
 } row;
 
 
@@ -61,41 +62,55 @@ void checkArgs(int *argc, char* argv[]) {
     }
 }
 
-void parse_log_record(char* data, row* row_parsed) {
+void parse_log_record(char* data, size_t data_len, GHashTable* ht, int* total_records, record* r_arr) {
     char* part_string;
     int x = 0;
+    record* cur_record = NULL;
+    row row_parsed;
     part_string = strtok(data, "\"");
     while (part_string != NULL)
     {
         switch (x)
         {
         case 1:
-            strncpy(row_parsed->url, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.url, part_string, strlen(part_string)+1);
             break;
         case 2:
-            strncpy(row_parsed->stats, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.stats, part_string, strlen(part_string)+1);
             break;
         case 3:
-            strncpy(row_parsed->ref, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.ref, part_string, strlen(part_string)+1);
             break;
         case 5:
-            strncpy(row_parsed->ua, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.ua, part_string, strlen(part_string)+1);
             break;
         default:
             break;
         }
         x++;
         part_string = strtok(NULL,"\"");
-
     }
+    if (g_hash_table_contains(ht, row_parsed.url)) {
+        cur_record = (record*)g_hash_table_lookup(ht, row_parsed.url);
+        cur_record->count++;
+    }
+    else {
+        
+        int cur_counter = *total_records;
+        *total_records = *total_records + 1;
+        g_hash_table_insert(ht, (gpointer)(row_parsed.url), (gpointer)&r_arr[cur_counter]);
+        strncpy(r_arr[cur_counter].url, row_parsed.url, sizeof(row_parsed.url));
+        r_arr[cur_counter].count = 1;
+    }
+    memset(data, 0, data_len);
 }
 
 int main(int argc, char* argv[]) {
 
     checkArgs(&argc, argv);
-    char LOGDIR[200];
+    char LOGDIR[MAX_FILEPATH_LEN]="\0";
     strncpy(LOGDIR, argv[1], strlen(argv[1]));
-    char CUR_FILE_NAME[200] = "";
+    char CUR_FILE_NAME[MAX_FILEPATH_LEN]="\0";
     // char CUR_DIR[200] = "/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/logs/logs/";
     (void)argc;
 
@@ -103,13 +118,15 @@ int main(int argc, char* argv[]) {
     DIR *dp;
     struct dirent *ep;     
     dp = opendir(LOGDIR);
-    buffer temp_buffer;
+    char temp_buffer[MAX_LOGENTRY_LEN];
     int r_count = 0;
-    record* cur_record = NULL;
     uint8_t* start_address;
     GHashTable* hash_table = g_hash_table_new(g_str_hash, NULL);
-    record* r_array = malloc(1000000000 * sizeof(record));
-    row row_parsed;
+    record* r_array = malloc(MAX_LOG_ENTRIES * sizeof(record));
+    if (!r_array) {
+        puts("Memory error");
+        return EXIT_FAILURE;
+    }
     size_t i = 0;
     size_t k = 0;
 
@@ -122,7 +139,7 @@ int main(int argc, char* argv[]) {
         if (strcmp(ep->d_name, ".") != 0 && strcmp(ep->d_name, "..") != 0) {
             strncpy(CUR_FILE_NAME, LOGDIR, sizeof(LOGDIR));
             strcat(CUR_FILE_NAME, ep->d_name);
-            printf("дир %s 0\n", LOGDIR);
+            printf("дир %s\n", LOGDIR);
             size_t fsize = getFileSize(CUR_FILE_NAME);
             if (fsize == 0) {
                 printf("Размер проверяемого файла %s 0\n", CUR_FILE_NAME);
@@ -137,32 +154,16 @@ int main(int argc, char* argv[]) {
             printf("%s file mapped\n", CUR_FILE_NAME);
             i = 0;
             k = 0;
-            memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
-            temp_buffer.len = 0;
+            memset(temp_buffer, 0, sizeof(temp_buffer));
             while (i < 100000) {
                 if (*(start_address + i*sizeof(uint8_t)) != '\n' && i != fsize - 1) {
-                    temp_buffer.data[k] =  *(start_address + i*sizeof(uint8_t));
+                    temp_buffer[k] =  *(start_address + i*sizeof(uint8_t));
                     k++;
                 } 
                 else {
-                    temp_buffer.data[k + 1] = '\0';
-                    temp_buffer.len = k + 1;
+                    temp_buffer[k + 1] = '\0';
                     k = 0;
-                    parse_log_record(temp_buffer.data, &row_parsed);
-                    if (g_hash_table_contains(hash_table, row_parsed.url)) {
-                        cur_record = (record*)g_hash_table_lookup(hash_table, row_parsed.url);
-                        cur_record->count = cur_record->count + 1;
-                    }
-                    else {
-                        strncpy(r_array[r_count].url, row_parsed.url, sizeof(row_parsed.url));
-                        r_array[r_count].count = 1;
-                        g_hash_table_insert(hash_table, (gpointer)row_parsed.url, (gpointer)&r_array[r_count]);
-                        r_count++;
-                    }
-                    memset(&row_parsed.url[0], 0, sizeof(row_parsed.url));
-                    cur_record = NULL;
-                    memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
-                    temp_buffer.len = 0;
+                    parse_log_record(temp_buffer, sizeof(temp_buffer), hash_table, &r_count, r_array);
                 }
                 i++;
             }
