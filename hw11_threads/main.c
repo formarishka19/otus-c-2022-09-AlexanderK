@@ -20,12 +20,17 @@ typedef struct {
     size_t count;
 } record;
 
+typedef struct {
+    char url[10000];
+    char stats[50];
+    char ref[10000];
+    char ua[1000];
+} row;
+
 
 int compare(const void *a, const void *b) {
-  
     record* recordA = (record*)a;
     record* recordB = (record*)b;
-  
     return (recordB->count - recordA->count);
 }
 
@@ -45,54 +50,79 @@ size_t getFileSize(char* filename) {
 void checkArgs(int *argc, char* argv[]) {
     if (*argc != 2) {
         printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
-        "Программа принимает на вход только один аргумент - путь до проверяемого файла\n\n"
+        "Программа принимает на вход только один аргумент - путь до директории с логами\n\n"
         "------ Синтаксис ------\n"
-        "%s <filepath>\n"
+        "%s <dirpath>\n"
         "-----------------------\n\n"
         "Пример запуска\n"
-        "%s ./files/test\n\n"
+        "%s ./logs/\n\n"
         "--- Повторите запуск правильно ---\n\n", argv[0], argv[0]);
         exit(EXIT_FAILURE);
     }
 }
 
+void parse_log_record(char* data, row* row_parsed) {
+    char* part_string;
+    int x = 0;
+    part_string = strtok(data, "\"");
+    while (part_string != NULL)
+    {
+        switch (x)
+        {
+        case 1:
+            strncpy(row_parsed->url, part_string, strlen(part_string)+1);
+            break;
+        case 2:
+            strncpy(row_parsed->stats, part_string, strlen(part_string)+1);
+            break;
+        case 3:
+            strncpy(row_parsed->ref, part_string, strlen(part_string)+1);
+            break;
+        case 5:
+            strncpy(row_parsed->ua, part_string, strlen(part_string)+1);
+            break;
+        default:
+            break;
+        }
+        x++;
+        part_string = strtok(NULL,"\"");
+
+    }
+}
+
 int main(int argc, char* argv[]) {
 
-    // checkArgs(&argc, argv);
-    // char* CUR_FILE_NAME = argv[1];
+    checkArgs(&argc, argv);
+    char LOGDIR[200];
+    strncpy(LOGDIR, argv[1], strlen(argv[1]));
     char CUR_FILE_NAME[200] = "";
-    char CUR_DIR[200] = "/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/logs/logs/";
+    // char CUR_DIR[200] = "/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/logs/logs/";
     (void)argc;
 
     FILE *fp;
     DIR *dp;
     struct dirent *ep;     
-    dp = opendir(CUR_DIR);
+    dp = opendir(LOGDIR);
     buffer temp_buffer;
     int r_count = 0;
     record* cur_record = NULL;
     uint8_t* start_address;
     GHashTable* hash_table = g_hash_table_new(g_str_hash, NULL);
     record* r_array = malloc(1000000000 * sizeof(record));
-    char* istr;
-    char url[10000];
-    char stats[50];
-    char ref[10000];
-    char ua[1000];
-    int x;
+    row row_parsed;
     size_t i = 0;
     size_t k = 0;
 
     if (!dp)
     {
-        puts("Couldn't open the directory");
-        printf("Couldn't open the directory %s\n", CUR_DIR);
+        printf("Couldn't open the directory %s\n", LOGDIR);
         return EXIT_FAILURE;
     }
     while ((ep = readdir(dp)) != NULL) {
         if (strcmp(ep->d_name, ".") != 0 && strcmp(ep->d_name, "..") != 0) {
-            strncpy(CUR_FILE_NAME, CUR_DIR, sizeof(CUR_DIR));
+            strncpy(CUR_FILE_NAME, LOGDIR, sizeof(LOGDIR));
             strcat(CUR_FILE_NAME, ep->d_name);
+            printf("дир %s 0\n", LOGDIR);
             size_t fsize = getFileSize(CUR_FILE_NAME);
             if (fsize == 0) {
                 printf("Размер проверяемого файла %s 0\n", CUR_FILE_NAME);
@@ -109,7 +139,7 @@ int main(int argc, char* argv[]) {
             k = 0;
             memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
             temp_buffer.len = 0;
-            while (i < fsize) {
+            while (i < 100000) {
                 if (*(start_address + i*sizeof(uint8_t)) != '\n' && i != fsize - 1) {
                     temp_buffer.data[k] =  *(start_address + i*sizeof(uint8_t));
                     k++;
@@ -118,42 +148,18 @@ int main(int argc, char* argv[]) {
                     temp_buffer.data[k + 1] = '\0';
                     temp_buffer.len = k + 1;
                     k = 0;
-                    x = 0;
-                    istr = strtok(temp_buffer.data, "\"");
-                    while (istr != NULL)
-                    {
-                        switch (x)
-                        {
-                        case 1:
-                            strncpy(url, istr, strlen(istr)+1);
-                            break;
-                        case 2:
-                            strncpy(stats, istr, strlen(istr)+1);
-                            break;
-                        case 3:
-                            strncpy(ref, istr, strlen(istr)+1);
-                            break;
-                        case 5:
-                            strncpy(ua, istr, strlen(istr)+1);
-                            break;
-                        default:
-                            break;
-                        }
-                        x++;
-                        istr = strtok(NULL,"\"");
-
-                    }
-                    if (g_hash_table_contains(hash_table, url)) {
-                        cur_record = (record*)g_hash_table_lookup(hash_table, url);
+                    parse_log_record(temp_buffer.data, &row_parsed);
+                    if (g_hash_table_contains(hash_table, row_parsed.url)) {
+                        cur_record = (record*)g_hash_table_lookup(hash_table, row_parsed.url);
                         cur_record->count = cur_record->count + 1;
                     }
                     else {
-                        strncpy(r_array[r_count].url, url, sizeof(url));
+                        strncpy(r_array[r_count].url, row_parsed.url, sizeof(row_parsed.url));
                         r_array[r_count].count = 1;
-                        g_hash_table_insert(hash_table, (gpointer)url, (gpointer)&r_array[r_count]);
+                        g_hash_table_insert(hash_table, (gpointer)row_parsed.url, (gpointer)&r_array[r_count]);
                         r_count++;
                     }
-                    memset(&url[0], 0, sizeof(url));
+                    memset(&row_parsed.url[0], 0, sizeof(row_parsed.url));
                     cur_record = NULL;
                     memset(temp_buffer.data, 0, sizeof(temp_buffer.data));
                     temp_buffer.len = 0;
