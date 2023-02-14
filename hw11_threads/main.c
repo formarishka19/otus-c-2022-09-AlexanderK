@@ -62,7 +62,7 @@ void checkArgs(int *argc, char* argv[]) {
     }
 }
 
-void parse_log_record(char* data, size_t data_len, GHashTable* ht, int* total_records, record* r_arr) {
+void parse_log_record(char* data, GHashTable* ht, int* total_records, record* r_arr) {
     char* part_string;
     int x = 0;
     record* cur_record = NULL;
@@ -99,10 +99,10 @@ void parse_log_record(char* data, size_t data_len, GHashTable* ht, int* total_re
         int cur_counter = *total_records;
         *total_records = *total_records + 1;
         g_hash_table_insert(ht, (gpointer)(row_parsed.url), (gpointer)&r_arr[cur_counter]);
-        strncpy(r_arr[cur_counter].url, row_parsed.url, sizeof(row_parsed.url));
+        strncpy(r_arr[cur_counter].url, row_parsed.url, MAX_URL_LEN);
         r_arr[cur_counter].count = 1;
     }
-    memset(data, 0, data_len);
+    memset(data, 0, MAX_LOGENTRY_LEN);
 }
 
 int main(int argc, char* argv[]) {
@@ -154,8 +154,8 @@ int main(int argc, char* argv[]) {
             printf("%s file mapped\n", CUR_FILE_NAME);
             i = 0;
             k = 0;
-            memset(temp_buffer, 0, sizeof(temp_buffer));
-            while (i < 100000) {
+            memset(temp_buffer, 0, MAX_LOGENTRY_LEN);
+            while (i < fsize) {
                 if (*(start_address + i*sizeof(uint8_t)) != '\n' && i != fsize - 1) {
                     temp_buffer[k] =  *(start_address + i*sizeof(uint8_t));
                     k++;
@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
                 else {
                     temp_buffer[k + 1] = '\0';
                     k = 0;
-                    parse_log_record(temp_buffer, sizeof(temp_buffer), hash_table, &r_count, r_array);
+                    parse_log_record(temp_buffer, hash_table, &r_count, r_array);
                 }
                 i++;
             }
@@ -171,7 +171,7 @@ int main(int argc, char* argv[]) {
         }
     }
     g_hash_table_destroy(hash_table);
-    r_count--;
+    // r_count;
     printf("elements %d\n", r_count);
     qsort(r_array, r_count, sizeof(record), compare);
     for (int t=0; t<10; t++) {
