@@ -9,6 +9,7 @@
 #include <glib.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <time.h>
 
 #define MAX_URL_LEN 10000
 #define MAX_USERAGENT_LEN 1000
@@ -16,6 +17,9 @@
 #define MAX_LOG_ENTRIES 1000000000
 #define MAX_PATH_LEN 1000
 #define MAX_LOG_FILES 100
+
+clock_t start, end;
+double cpu_time_used;
 
 typedef struct { 
     char url[MAX_URL_LEN];
@@ -120,10 +124,11 @@ void checkArgs(int *argc, char* argv[]) {
 
 void parse_log_record(char* data, GHashTable* ht, int* total_records, record* r_arr) {
     char* part_string;
+    char* saveptr;
     int x = 0;
     record* cur_record = NULL;
     row row_parsed;
-    part_string = strtok(data, "\"");
+    part_string = strtok_r(data, "\"", &saveptr);
     while (part_string != NULL)
     {
         switch (x)
@@ -144,35 +149,31 @@ void parse_log_record(char* data, GHashTable* ht, int* total_records, record* r_
             break;
         }
         x++;
-        part_string = strtok(NULL,"\"");
+        part_string = strtok_r(NULL,"\"", &saveptr);
     }
     if (g_hash_table_contains(ht, row_parsed.url)) {
         cur_record = (record*)g_hash_table_lookup(ht, row_parsed.url);
         cur_record->count++;
     }
     else {
-        
         int cur_counter = *total_records;
         *total_records = *total_records + 1;
         g_hash_table_insert(ht, (gpointer)(row_parsed.url), (gpointer)&r_arr[cur_counter]);
         strncpy(r_arr[cur_counter].url, row_parsed.url, MAX_URL_LEN);
         r_arr[cur_counter].count = 1;
     }
-    memset(data, 0, MAX_LOGENTRY_LEN);
+    
 }
 
 void* thread_func(void* arg) {
-
     worker* a = arg;
+    size_t i = 0;
+    size_t k = 0;
     FILE *fp = fopen(a->file.filepath, "rb");
     uint8_t* start_address = mmap(NULL, a->file.fsize, PROT_READ, MAP_PRIVATE, fp->_file, 0);
     fclose(fp);
     printf("%s file mapped\n", a->file.filepath);
-    size_t i = 0;
-    size_t k = 0;
-    memset(a->temp_buffer, 0, MAX_LOGENTRY_LEN);
     while (i < a->file.fsize) {
-    // while (i < 10000) {
         if (*(start_address + i*sizeof(uint8_t)) != '\n' && i != a->file.fsize - 1) {
             a->temp_buffer[k] =  *(start_address + i*sizeof(uint8_t));
             k++;
@@ -181,25 +182,22 @@ void* thread_func(void* arg) {
             a->temp_buffer[k + 1] = '\0';
             k = 0;
             parse_log_record(a->temp_buffer, a->hash_table, &(a->r_count), a->r_array);
+            memset(a->temp_buffer, 0, MAX_LOGENTRY_LEN);
         }
         i++;
     }
     munmap(start_address, a->file.fsize);
-    // g_hash_table_destroy(a->hash_table);
     printf("elements %d\n", a->r_count);
     qsort(a->r_array, a->r_count, sizeof(record), compare);
     for (int t=0; t<10; t++) {
         printf("URL %s - total %ld\n", a->r_array[t].url, a->r_array[t].count);
     }
-    g_hash_table_destroy(a->hash_table);
-    free(a->r_array);
     pthread_exit(NULL);
 }
 
 int main(int argc, char* argv[]) {
 
     checkArgs(&argc, argv);
-
     // char CUR_DIR[200] = "/Users/aleksandrk/dev/c/otus-c-2022-09-AlexanderK/hw11_threads/logs/logs/";
     int t_count;
     int f_count;
@@ -211,27 +209,27 @@ int main(int argc, char* argv[]) {
     strncpy(log_files.dir_path, argv[1], MAX_PATH_LEN);
 
     get_files(&log_files);
-
     f_count = log_files.count;
-
     worker workers[t_count];
     for (int i = 0; i < t_count; i++) {
-        workers[i].hash_table = g_hash_table_new(g_str_hash, NULL);
-        workers[i].r_count = 0;
-        workers[i].r_array = malloc(MAX_LOG_ENTRIES * sizeof(record));
-        if (!workers[i].r_array) {
-            printf("Memory error while worker %d initialazing, set less threads\n", i);
-            return EXIT_FAILURE;
-        }
         if (i < f_count) {
             workers[i].file = log_files.files[i];
             workers[i].status = 1;
+            workers[i].hash_table = g_hash_table_new(g_str_hash, NULL);
+            workers[i].r_count = 0;
+            memset(workers[i].temp_buffer, 0, MAX_LOGENTRY_LEN);
+            workers[i].r_array = malloc(MAX_LOG_ENTRIES * sizeof(record));
+            if (!workers[i].r_array) {
+                printf("Memory error while worker %d initialazing, set less threads\n", i);
+                return EXIT_FAILURE;
+            }
         }
         else {
             workers[i].status = 0;
         }
     }
-
+    clock_t t;
+    t = clock();
     for (int w = 0; w < t_count; w++) {
         if (workers[w].status != 0) {
             pthread_create(&workers[w].id, NULL, thread_func, &workers[w]);
@@ -240,8 +238,12 @@ int main(int argc, char* argv[]) {
     for (int w = 0; w < t_count; w++) {
         if (workers[w].status != 0) {
             pthread_join(workers[w].id, NULL);
+            g_hash_table_destroy(workers[w].hash_table);
+            free(workers[w].r_array);
         }
     }
-
+    t = clock() - t;
+    double time_taken = ((double)t)/CLOCKS_PER_SEC;
+    printf("workers: %d, execute time: %f seconds\n", t_count, time_taken);
 	return EXIT_SUCCESS;
 }
