@@ -121,12 +121,12 @@ int main(int argc, char* argv[]) {
         free(BUFFER);
     }
     else {
-        uint8_t* start_address = mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fp->_file, 0);
+        uint8_t* start_address = mmap(NULL, fsize, PROT_READ, MAP_PRIVATE, fileno(fp), 0);
         fclose(fp);
         CRC32_std(start_address, fsize, &cur_crc);
         munmap(start_address, fsize);
     }
     cur_crc ^= 0xFFFFFFFFu;
-    printf("сумма crc32 файла %u\n", cur_crc);
+    printf("сумма crc32 файла %x\n", cur_crc);
 	return EXIT_SUCCESS;
 }
