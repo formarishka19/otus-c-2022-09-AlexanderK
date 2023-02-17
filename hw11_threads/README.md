@@ -1,13 +1,13 @@
 # Программа разбора combined логов веб-сервера
-формат https://httpd.apache.org/docs/2.4/logs.html#combined
+формат логов https://httpd.apache.org/docs/2.4/logs.html#combined
 
-## Компиляция и запуск (программа принимает единственный аргумент - путь директории с логами)
+## Компиляция и запуск (программа принимает два аргумента - абсолютный путь до директории с логами и количество потоков)
 ```
-mkdir bin
-cd bin
+mkdir build
+cd build
 cmake ..
 make
-cd ..
-./parse </.../logdir/>
+cd bin
+./parse </logdir/>
 ```
 
