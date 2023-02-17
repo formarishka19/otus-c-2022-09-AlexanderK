@@ -8,6 +8,6 @@ cd build
 cmake ..
 make
 cd bin
-./parse </logdir/>
+./parse </logdir/> 10
 ```
 
