@@ -17,3 +17,4 @@ gcc main.c -Wall -Wextra -Wpedantic -std=c11
 ```
 proxychains4 ./a.out arial abirvalg
 ```
+![output example](./img.png)
