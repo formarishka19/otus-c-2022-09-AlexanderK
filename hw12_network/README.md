@@ -19,4 +19,4 @@ proxychains4 ./a.out arial abirvalg
 ```
 
 ## Пример
-![output example](./img.png)
+![output example](./_img.png)
