@@ -87,7 +87,6 @@ int main(int argc, char** argv)
     char font[50] = "/";
     char buffer[BUF_SIZE];
     int buffer_len = 0;
-    // char message[MAX_MSG_SIZE + 10] = "figlet ";
     
     if (strlen(argv[2]) > MAX_MSG_SIZE || strlen(argv[1]) > MAX_MSG_SIZE) {
         printf("Слишком длинное сообщение или название шрифта. Повторите запуск с длиной аргументов не более %d символов", MAX_MSG_SIZE);
@@ -117,6 +116,7 @@ int main(int argc, char** argv)
     puts("connected");
     if(send(sock_fd, "\n", 1, 0) < 0) {
         perror("send");
+        shutdown(sock_fd, SHUT_RDWR);
         close(sock_fd);
         return EXIT_FAILURE;
     }
