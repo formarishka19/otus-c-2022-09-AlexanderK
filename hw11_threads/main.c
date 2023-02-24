@@ -153,14 +153,18 @@ void parse_log_record(char* data, GHashTable* ht_url, unsigned long* total_urls,
     int x = 0;
     record* cur_record = NULL;
     row row_parsed;
+    char* temp;
+    gchar** url_split;
+    gchar** stats_split;
     part_string = strtok_r(data, "\"", &saveptr);
     while (part_string != NULL)
     {
         switch (x)
         {
         case 1:
-            strncpy(row_parsed.url, part_string, strlen(part_string)+1); //почему-то после удаления этой строки все валится(((
-            gchar** url_split = g_strsplit((const gchar *)part_string, " ", -1);
+            // strncpy(row_parsed.url, part_string, strlen(part_string)+1); //почему-то после удаления этой строки все валится(((
+            // upd: валилось именно при компиляции, не так выразился. решилось отдельным объявлением gchar** url_split вначале функции
+            url_split = g_strsplit((const gchar *)part_string, " ", -1);
             if ((char*)url_split[1] != NULL) {
                 strncpy(row_parsed.url, (char*)url_split[1], MAX_URL_LEN);
             }
@@ -174,17 +178,18 @@ void parse_log_record(char* data, GHashTable* ht_url, unsigned long* total_urls,
                 row_parsed.bytes = 0;
             }
             else {
-                char temp[60];
-                strncpy(temp, part_string + 5, strlen(part_string) - 5);
-                strncpy(row_parsed.stats, temp, strlen(temp) + 1);
-                sscanf(row_parsed.stats, "%lu", &row_parsed.bytes); 
+                stats_split = g_strsplit((const gchar *)part_string, " ", -1);
+                if (stats_split[2]) {
+                    row_parsed.bytes = strtol((char*)stats_split[2], &temp, 10);
+                }
+                g_strfreev(stats_split);
             }  
             break;
         case 3:
-            strncpy(row_parsed.ref, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.ref, part_string, MAX_URL_LEN);
             break;
         case 5:
-            strncpy(row_parsed.ua, part_string, strlen(part_string)+1);
+            strncpy(row_parsed.ua, part_string, MAX_USERAGENT_LEN);
             break;
         default:
             break;
@@ -221,40 +226,45 @@ void parse_log_record(char* data, GHashTable* ht_url, unsigned long* total_urls,
     
 }
 
-int worker_fetch(worker* w, unsigned long *total_urls, unsigned long *total_refs, unsigned long *total_bytes, unsigned long *res_url_count, GHashTable* ht_url, GHashTable* ht_ref, record* res_url_array, record* res_ref_array) {
+int worker_fetch(worker* w, unsigned long *total_req, unsigned long *total_refs, unsigned long *total_bytes, unsigned long *res_url_count, GHashTable* ht_url, GHashTable* ht_ref, record* res_url_array, record* res_ref_array) {
 
     record* cur_record;
     record* cur_ref_record;
     record ref_element;
+    record url_element;
     unsigned long u_counter;
     unsigned long r_counter;
     unsigned long cur_counter_url;
     unsigned long cur_counter_ref;
     char ref[MAX_URL_LEN];
+    char url[MAX_URL_LEN];
 
     for (u_counter = 0; u_counter < w->url_count; u_counter++) {
-        if (g_hash_table_contains(ht_url, w->url_array[u_counter].url)) {
-            cur_record = (record*)g_hash_table_lookup(ht_url, w->url_array[u_counter].url);
-            cur_record->count += w->url_array[u_counter].count;
-            cur_record->bytes += w->url_array[u_counter].bytes;
+        url_element = w->url_array[u_counter];
+        strncpy(url, url_element.url, MAX_URL_LEN);
+        if (g_hash_table_contains(ht_url, url)) {
+            cur_record = (record*)g_hash_table_lookup(ht_url, url);
+            cur_record->count = cur_record->count + url_element.count;
+            cur_record->bytes = cur_record->bytes + url_element.bytes;
         }
         else {
-            cur_counter_url = *total_urls;
-            g_hash_table_insert(ht_url, (gpointer)(w->url_array[u_counter].url), (gpointer)&res_url_array[cur_counter_url]);
-            strncpy(res_url_array[cur_counter_url].url, w->url_array[u_counter].url, MAX_URL_LEN);
-            res_url_array[cur_counter_url].count = w->url_array[u_counter].count;
-            res_url_array[cur_counter_url].bytes = w->url_array[u_counter].bytes;
-            *total_bytes += w->url_array[u_counter].bytes;
-            *total_urls += w->url_array[u_counter].count;
+            cur_counter_url = *res_url_count;
+            g_hash_table_insert(ht_url, (gpointer)(url), (gpointer)&res_url_array[cur_counter_url]);
+            strncpy(res_url_array[cur_counter_url].url, url, MAX_URL_LEN);
+            res_url_array[cur_counter_url].count = url_element.count;
+            res_url_array[cur_counter_url].bytes = url_element.bytes;
+            
             *res_url_count = *res_url_count + 1;
         }
+        *total_req = *total_req + url_element.count;
+        *total_bytes = *total_bytes + url_element.bytes;
     }
     for (r_counter = 0; r_counter < w->ref_count; r_counter++) {
         ref_element = w->ref_array[r_counter];
         strncpy(ref, ref_element.url, MAX_URL_LEN);
         if (g_hash_table_contains(ht_ref, ref)) {
             cur_ref_record = (record*)g_hash_table_lookup(ht_ref, ref);
-            cur_ref_record->count += ref_element.count;
+            cur_ref_record->count = cur_ref_record->count + ref_element.count;
         }
         else {
             cur_counter_ref = *total_refs;
@@ -344,54 +354,46 @@ int main(int argc, char* argv[]) {
     GHashTable* hash_table_ref_res = g_hash_table_new(g_str_hash, NULL);
     record* res_url_array = malloc(MAX_LOG_ENTRIES * sizeof(record));
     record* res_ref_array = malloc(MAX_LOG_ENTRIES * sizeof(record));
-    unsigned long total_urls = 0;
+    unsigned long total_requests = 0;
     unsigned long total_refs = 0;
     unsigned long total_bytes = 0;
     unsigned long res_url_count = 0;
 
     clock_t t;
     t = clock();
-   
-    int count = 0;
+
     int threads_count = 0;
     while (iterator) {
+        // int count = 0;
         for (int counter = 0; counter < t_count; counter++) {
             if (workers[counter].status == 0 && iterator) {
                 threads_count++;
-                printf("active threads %d\n", threads_count);
+                // printf("active threads %d\n", threads_count);
                 worker_load(&workers[counter], (logfile*)(iterator->data));
                 pthread_create(&workers[counter].id, NULL, thread_func, &workers[counter]);
-                printf("started file\t %s\n", workers[counter].file.filepath);
+                // printf("started file\t %s\n", workers[counter].file.filepath);
                 iterator = iterator->next;
-                count++;
             }
         }
-        if (iterator) {
-            for (int x = 0; x < count; x++) {
-                pthread_join(workers[x].id, NULL);
-                worker_fetch(&workers[x], &total_urls, &total_refs, &total_bytes, &res_url_count, hash_table_url_res, hash_table_ref_res, res_url_array, res_ref_array);
-                worker_clear(&workers[x]);
-                threads_count--;
-                printf("active threads %d\n", threads_count);
-            }
-            count = 0;
+        do {
+            threads_count--;
+            pthread_join(workers[threads_count].id, NULL);
+            puts(workers[threads_count].file.filepath);
+            printf("worker bytes %lu\n", workers[threads_count].bytes);
+            worker_fetch(&workers[threads_count], &total_requests, &total_refs, &total_bytes, &res_url_count, hash_table_url_res, hash_table_ref_res, res_url_array, res_ref_array);
+            worker_clear(&workers[threads_count]);
+            // threads_count--;
+            // printf("active threads %d\n", threads_count);
+            printf("total bytes %lu\n", total_bytes);
         }
-        else {
-            for (int x = 0; x < count; x++) {
-                pthread_join(workers[x].id, NULL);
-                worker_fetch(&workers[x], &total_urls, &total_refs, &total_bytes, &res_url_count, hash_table_url_res, hash_table_ref_res, res_url_array, res_ref_array);
-                worker_clear(&workers[x]);
-                threads_count--;
-                printf("active threads %d\n", threads_count);
-            }
-        }
+        while (threads_count);
     }
 
     qsort(res_url_array, res_url_count, sizeof(record), compare_url);
     qsort(res_ref_array, total_refs, sizeof(record), compare_ref);
 
     puts("\n");
-    printf(ANSI_COLOR_BOLD "Total bytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET ANSI_COLOR_BOLD ", total requests " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET "\n" ANSI_COLOR_RESET, total_bytes, total_urls);
+    printf(ANSI_COLOR_BOLD "Total bytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET ANSI_COLOR_BOLD ", total requests " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET "\n" ANSI_COLOR_RESET, total_bytes, total_requests);
     for (int t = 0; t < 10; t++) {
         printf("%d URL: " ANSI_COLOR_GREEN "%s" ANSI_COLOR_RESET "\tbytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET ", requests " ANSI_COLOR_BLUE "%ld" ANSI_COLOR_RESET "\n", t+1, res_url_array[t].url, res_url_array[t].bytes, res_url_array[t].count);
     }
