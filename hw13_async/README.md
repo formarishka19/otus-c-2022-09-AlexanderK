@@ -1,8 +1,15 @@
-# todo..
+sudo ./server /home/otus/hw13_async/build/bin 10.129.0.25:80
 
-настроить http-диалог (разобраться с событиями чтения/записи через пользовательские структуры для epoll)  
-https://stackoverflow.com/questions/69230597/how-to-access-user-context-data-set-on-epoll-when-calling-epoll-wait  
+# todo..
+mmap for files while sending
+
+unbind interface
+проверка пермишенов для доступа к директории
 
 отдельный поток/процесс, который индексирует директорию с файлами (имя, размер, путь)  
 
 sendfile (linux)
+
+демонизация?
+
+логи

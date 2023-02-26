@@ -10,25 +10,83 @@
 #include <sys/epoll.h>
 #include <unistd.h>
 #include <glib.h>
+#include <time.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
-// #define DEFAULT_PORT 80
-// #define DEFAULT_HOST "127.0.0.1"
+// #define FILENAME "23_async_homework-12926-11d3b1.pdf"
+#define FILENAME "1.txt"
+
 #define IPV4_ADDR_LEN 16
 #define MAX_EPOLL_EVENTS 128
 #define BACKLOG 128
-#define CHUNK_SIZE 2048
-#define BUF_SIZE 20480
-#define MAX_MSG_SIZE 100
-#define RCV_RETRY_TIMEOUT 100000 //0.1 sec
-#define RCV_TIMEOUT 5 //sec
+#define MTU_SIZE 1024
 
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 #define ANSI_COLOR_BOLD    "\033[1m"
 
+enum STATUS {
+    INIT,
+    READ,
+    WRITE
+};
+
+typedef struct HTTP_HEADER {
+    char method[10];
+    char query[10240];
+    char version[10];
+} header;
+
+typedef struct HTTP_RESPONSE {
+    unsigned int status;
+    char protocol[10];
+    char datetime[100];
+    char content_type[50];
+    char server[20];
+} response;
+
+typedef struct SESSION {
+    int fd;
+    int status; //init/read/write
+} session;
 
 static char buffer[2048];
+
+size_t getFileSize(char* filename) {
+    struct stat finfo;
+    int status;
+    status = stat(filename, &finfo);
+    if(status == 0) {
+        return finfo.st_size;
+    }
+    else {
+        printf("Нельзя найти файл %s или получить о нем информацию\n", filename);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void parse_http(char* buffer, header* h) {
+    gchar** headers_split;
+    gchar** title_split;
+
+    headers_split = g_strsplit((const gchar *)buffer, "\r\n", -1);
+    char* title = (char*)headers_split[0];
+    //написать цикл разобра остальных заголовков (while headers_split[x], x++)
+    title_split = g_strsplit((const gchar *)title, " ", -1);
+    if ((char*)title_split[0] && (char*)title_split[1] && (char*)title_split[2]) {
+        strncpy(h->method, (char*)title_split[0], 10);
+        strncpy(h->query, (char*)title_split[1], 10240);
+        strncpy(h->version, (char*)title_split[2], 10);
+    }
+    else {
+        puts("Invalid method or query or protocol");
+        exit(EXIT_FAILURE);
+    }
+    g_strfreev(headers_split);
+    g_strfreev(title_split);
+}
 
 int setnonblocking(int sock)
 {
@@ -47,7 +105,7 @@ int setnonblocking(int sock)
  return 0;
 }
 
-void do_read(int fd)
+void do_read(int fd, session* ses)
 {
     int rc = recv(fd, buffer, sizeof(buffer), 0);
     if (rc < 0) {
@@ -56,16 +114,87 @@ void do_read(int fd)
     }
     buffer[rc] = 0;
     printf("read: %s\n", buffer);
+    header http_h = {"", "", ""};
+    //ограничить буфер, следить за его переполнением
+    parse_http(buffer, &http_h);
+    printf("HTTP version" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.version);
+    printf("HTTP method" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.method);
+    printf("HTTP query" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.query);
+    ses->status = WRITE;
 }
 
-void do_write(int fd)
+void do_write(int fd, session* ses)
 {
-    static const char* greeting = "Hello world!\n";
-    int rc = send(fd, greeting, strlen(greeting), 0);
+    response res;
+
+    char buf[100];
+    time_t now = time(0);
+    struct tm tm = *gmtime(&now);
+    char filename[255] = FILENAME;
+    size_t fsize = getFileSize(filename);
+
+    printf("file size %lu\n", fsize);
+
+    strftime(buf, sizeof buf, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+    snprintf(res.datetime, 100, "%s", buf);
+    res.status = 200;
+    strncpy(res.content_type, "application/octet-stream", 50);
+
+    FILE *fp;
+    if ((fp=fopen(filename, "rb") ) == NULL) {
+        printf("Error opening file %s\n", filename);
+        exit (1);
+    }
+    int headers_len = snprintf(NULL, 0, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s\r\nContent-Disposition: attachment; filename=\"%s\"\r\nServer: sasha/1.0\r\n\r\n", res.status, res.datetime, res.content_type, filename);
+    char* headers = malloc(headers_len+1);
+    if(!headers) {
+        puts("memory error");
+        exit(EXIT_FAILURE);
+    }
+    snprintf(headers, headers_len, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s\r\nContent-Disposition: attachment; filename=\"%s\"\r\nServer: sasha/1.0\r\n\r\n", res.status, res.datetime, res.content_type, filename);
+    int rc;
+    /* Sending headers */
+    rc = send(fd, headers, strlen(headers), 0);
     if (rc < 0) {
         perror("write");
-        return;
+        puts("error while sending to socket");
+        fclose(fp);
+        shutdown(fd, SHUT_RDWR);
+        exit(EXIT_FAILURE);
     }
+    free(headers);
+   
+    char file_data[MTU_SIZE];
+    size_t nbytes = 0;
+    int offset;
+    int sent;
+    while ( (nbytes = fread(file_data, sizeof(char), MTU_SIZE, fp)) > 0)
+    {
+        printf("bytes read from file %lu\n", nbytes);
+        offset = 0;
+        sent = 0;
+        while (nbytes > 0) {
+            sent = send(fd, file_data + offset, nbytes, MSG_DONTWAIT);
+            if (sent >= 0) {
+                offset += sent;
+                nbytes -= sent;
+                printf("sent bytes %d\n", sent);
+            }
+
+            else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                continue;
+            }
+            else if (sent == -1) {
+                printf("errno %d\nreseting..\n", errno);
+                fclose(fp);
+                shutdown(fd, SHUT_RDWR);
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+    // send(fd, "\r\n\r\n", 5, MSG_DONTWAIT);
+    puts("closed");
+    fclose(fp);
 }
 
 void process_error(int fd)
@@ -85,6 +214,7 @@ int main(int argc, char** argv) {
     char* p;
     char temp[6] = {0};
     char address[IPV4_ADDR_LEN];
+    session sessions[MAX_EPOLL_EVENTS];
 
     gchar** arg_split = g_strsplit((const gchar *)argv[2], ":", -1);
     if ((char*)arg_split[0] && (char*)arg_split[1]) {
@@ -96,7 +226,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     g_strfreev(arg_split);
-    
+
     port = strtol(temp, &p, 10);
     if (*p) {
         printf("Invalid port number %s\n", temp);
@@ -159,9 +289,12 @@ int main(int argc, char** argv) {
 
                 setnonblocking(connfd);
                 connev.data.fd = connfd;
+                sessions[connfd].fd = connfd;
+                sessions[connfd].status = READ;
                 connev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
                 if (epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &connev) < 0) {
                     perror("epoll_ctl");
+                    sessions[connfd].status = INIT;
                     close(connfd);
                     continue;
                 }
@@ -170,12 +303,13 @@ int main(int argc, char** argv) {
             else {
                 int fd = events[i].data.fd;
 
-                if (events[i].events & EPOLLIN) {
-                    do_read(fd);
+                if ((events[i].events & EPOLLIN) && sessions[fd].status == READ) {
+                    do_read(fd, &sessions[fd]);
                 }
 
-                if (events[i].events & EPOLLOUT) { // срабатывает быстрее, чем функция do_read
-                    do_write(fd);
+                if ((events[i].events & EPOLLOUT) && sessions[fd].status == WRITE) {
+                    do_write(fd, &sessions[fd]);
+                    sessions[fd].status = INIT;
                 }
 
                 if (events[i].events & EPOLLRDHUP) {
@@ -183,6 +317,7 @@ int main(int argc, char** argv) {
                 }
 
                 epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                shutdown(fd, SHUT_RDWR);
                 close(fd);
                 events_count--;
             }
