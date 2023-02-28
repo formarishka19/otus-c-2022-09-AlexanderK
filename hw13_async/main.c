@@ -14,8 +14,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-// #define FILENAME "23_async_homework-12926-11d3b1.pdf"
-#define FILENAME "1.txt"
+#define FILENAME "23_async_handout-12926-4862e4.pdf"
 
 #define IPV4_ADDR_LEN 16
 #define MAX_EPOLL_EVENTS 128
@@ -45,6 +44,7 @@ typedef struct HTTP_RESPONSE {
     char datetime[100];
     char content_type[50];
     char server[20];
+    size_t content_length;
 } response;
 
 typedef struct SESSION {
@@ -52,6 +52,7 @@ typedef struct SESSION {
     int status; //init/read/write
 } session;
 
+session sessions[MAX_EPOLL_EVENTS];
 static char buffer[2048];
 
 size_t getFileSize(char* filename) {
@@ -105,7 +106,7 @@ int setnonblocking(int sock)
  return 0;
 }
 
-void do_read(int fd, session* ses)
+void do_read(int fd)
 {
     int rc = recv(fd, buffer, sizeof(buffer), 0);
     if (rc < 0) {
@@ -120,10 +121,10 @@ void do_read(int fd, session* ses)
     printf("HTTP version" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.version);
     printf("HTTP method" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.method);
     printf("HTTP query" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.query);
-    ses->status = WRITE;
+    
 }
 
-void do_write(int fd, session* ses)
+void do_write(int fd)
 {
     response res;
 
@@ -139,62 +140,46 @@ void do_write(int fd, session* ses)
     snprintf(res.datetime, 100, "%s", buf);
     res.status = 200;
     strncpy(res.content_type, "application/octet-stream", 50);
+    res.content_length = fsize;
 
     FILE *fp;
     if ((fp=fopen(filename, "rb") ) == NULL) {
         printf("Error opening file %s\n", filename);
         exit (1);
     }
-    int headers_len = snprintf(NULL, 0, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s\r\nContent-Disposition: attachment; filename=\"%s\"\r\nServer: sasha/1.0\r\n\r\n", res.status, res.datetime, res.content_type, filename);
-    char* headers = malloc(headers_len+1);
-    if(!headers) {
+    int headers_len = snprintf(NULL, 0, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nContent-Disposition: inline; filename=%s\r\nServer: sasha/1.0\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n", res.status, res.datetime, res.content_type, filename, res.content_length);
+    char* file_data = malloc(fsize * sizeof(char) + headers_len + 1);
+    if (!file_data) {
         puts("memory error");
         exit(EXIT_FAILURE);
     }
-    snprintf(headers, headers_len, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s\r\nContent-Disposition: attachment; filename=\"%s\"\r\nServer: sasha/1.0\r\n\r\n", res.status, res.datetime, res.content_type, filename);
-    int rc;
-    /* Sending headers */
-    rc = send(fd, headers, strlen(headers), 0);
-    if (rc < 0) {
-        perror("write");
-        puts("error while sending to socket");
-        fclose(fp);
-        shutdown(fd, SHUT_RDWR);
-        exit(EXIT_FAILURE);
-    }
-    free(headers);
-   
-    char file_data[MTU_SIZE];
-    size_t nbytes = 0;
-    int offset;
-    int sent;
-    while ( (nbytes = fread(file_data, sizeof(char), MTU_SIZE, fp)) > 0)
-    {
-        printf("bytes read from file %lu\n", nbytes);
-        offset = 0;
-        sent = 0;
-        while (nbytes > 0) {
-            sent = send(fd, file_data + offset, nbytes, MSG_DONTWAIT);
-            if (sent >= 0) {
-                offset += sent;
-                nbytes -= sent;
-                printf("sent bytes %d\n", sent);
-            }
+    snprintf(file_data, headers_len + 1, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nContent-Disposition: inline; filename=%s\r\nServer: sasha/1.0\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n", res.status, res.datetime, res.content_type, filename, res.content_length);
 
-            else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                continue;
-            }
-            else if (sent == -1) {
-                printf("errno %d\nreseting..\n", errno);
-                fclose(fp);
-                shutdown(fd, SHUT_RDWR);
-                exit(EXIT_FAILURE);
-            }
+    size_t nbytes = fread(file_data + headers_len, sizeof(char), fsize, fp) + headers_len;
+    fclose(fp);
+
+    int offset = 0;
+    int sent = 0;
+    while (nbytes > 0) {
+        sent = send(fd, file_data + offset, nbytes, MSG_DONTWAIT);
+        if (sent >= 0) {
+            offset += sent;
+            nbytes -= sent;
+            printf("sent bytes %d\n", sent);
+        }
+
+        else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            continue;
+        }
+        else if (sent == -1) {
+            printf("errno %d\nreseting..\n", errno);
+            exit(EXIT_FAILURE);
         }
     }
-    // send(fd, "\r\n\r\n", 5, MSG_DONTWAIT);
+
+    free(file_data);
     puts("closed");
-    fclose(fp);
+    
 }
 
 void process_error(int fd)
@@ -214,7 +199,7 @@ int main(int argc, char** argv) {
     char* p;
     char temp[6] = {0};
     char address[IPV4_ADDR_LEN];
-    session sessions[MAX_EPOLL_EVENTS];
+    // session sessions[MAX_EPOLL_EVENTS];
 
     gchar** arg_split = g_strsplit((const gchar *)argv[2], ":", -1);
     if ((char*)arg_split[0] && (char*)arg_split[1]) {
@@ -286,15 +271,16 @@ int main(int argc, char** argv) {
                     close(connfd);
                     continue;
                 }
-
                 setnonblocking(connfd);
                 connev.data.fd = connfd;
                 sessions[connfd].fd = connfd;
                 sessions[connfd].status = READ;
+                printf("new socket %d, curr status READ\n", connfd);
                 connev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
                 if (epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &connev) < 0) {
                     perror("epoll_ctl");
                     sessions[connfd].status = INIT;
+                    printf("epoll_ctl socket %d, curr status INIT\n", connfd);
                     close(connfd);
                     continue;
                 }
@@ -304,22 +290,28 @@ int main(int argc, char** argv) {
                 int fd = events[i].data.fd;
 
                 if ((events[i].events & EPOLLIN) && sessions[fd].status == READ) {
-                    do_read(fd, &sessions[fd]);
+                    do_read(fd);
+                    sessions[fd].status = WRITE;
+                    printf("read from socket %d, ready to wite, curr status WRITE\n", fd);
                 }
 
                 if ((events[i].events & EPOLLOUT) && sessions[fd].status == WRITE) {
-                    do_write(fd, &sessions[fd]);
+                    do_write(fd);
                     sessions[fd].status = INIT;
+                    printf("wrote to socket %d, curr status INIT\n", fd);
+                    epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                    close(fd);
                 }
 
                 if (events[i].events & EPOLLRDHUP) {
                     process_error(fd);
+                    sessions[fd].status = INIT;
+                    printf("error in socket %d, curr status INIT\n", fd);
+                    epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                    close(fd);
                 }
-
-                epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
-                shutdown(fd, SHUT_RDWR);
-                close(fd);
                 events_count--;
+                
             }
         }
     }
