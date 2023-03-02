@@ -14,4 +14,4 @@ sudo ./server <file directory> <interface ip address>:<port>
 sudo ./server /home/otus/hw13_async/build/bin/temp/ 10.129.0.25:80
 
 ## скачать файл с сервера
-curl -vvv http://<external server address>/<filename>
+curl -vvv http://address:port/filename
