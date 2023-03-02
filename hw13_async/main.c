@@ -21,7 +21,7 @@
 
 #define IPV4_ADDR_LEN 16
 #define MAX_EPOLL_EVENTS 128
-#define DIR_REINDEXING_RATE 15 //sec
+// #define DIR_REINDEXING_RATE 60 //sec
 
 #define MAX_PATH_LEN 1000
 #define MAX_REQUEST_LEN 2048
@@ -71,10 +71,11 @@ typedef struct LOGDIR {
     GHashTable* filelist;
 } logdir;
 
-session sessions[MAX_EPOLL_EVENTS];
+
 static char buffer[MAX_REQUEST_LEN];
 static struct epoll_event events[MAX_EPOLL_EVENTS];
-logdir log_files;
+static session sessions[MAX_EPOLL_EVENTS];
+static logdir log_files;
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
 
@@ -91,11 +92,33 @@ size_t getFileSize(char* filename) {
     }
 }
 
-// static void print(gpointer key, gpointer value, gpointer a)
-// {
-//     (void)a;
-//     printf("%s %u\n", (char*)key, (uint32_t)(uintptr_t)value);
-// }
+void send_error(int* fd, response* resp) {
+    char status_verbose[15] = {0};
+    switch (resp->status)
+    {
+        case NOT_FOUND:
+            strncpy(status_verbose, "NOT_FOUND", 15);
+            break;
+
+        case FORBIDDEN:
+            strncpy(status_verbose, "FORBIDDEN", 15);
+            break;
+
+        default:
+            strncpy(status_verbose, "UNAVAILABLE", 15);
+            break;
+    }
+    int headers_len = snprintf(NULL, 0, RESPONSE_ERROR, resp->status, status_verbose, resp->datetime);
+    char* headers = malloc(headers_len + 1);
+    if (!headers) {
+        puts("memory error while generating headers");
+        return;
+    }
+    snprintf(headers, headers_len + 1, RESPONSE_ERROR, resp->status, status_verbose, resp->datetime);
+    send(*fd, headers, headers_len, MSG_DONTWAIT);
+    free(headers);
+    return;
+}
 
 int parse_http(char* buffer, session* ses) {
     gchar** headers_split;
@@ -150,77 +173,61 @@ int do_read(int fd, session* ses)
     return 0;
 }
 
-void do_write(int fd, session* ses) // написать функцию формирующую респонз (передаем туда статус и структуру res)
+int do_write(int fd, session* ses) // написать функцию формирующую респонз (передаем туда статус и структуру res)
 {
     response res;
     int headers_len;
     char* file_data;
-    char* headers;
     char buf[100];
     char* filename;
+    FILE *fp;
     time_t now = time(0);
     struct tm tm = *gmtime(&now);
 
     strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S %Z", &tm);
     snprintf(res.datetime, sizeof(buf), "%s", buf);
 
-    
     int filename_len = snprintf(NULL, 0, "%s%s", log_files.dir_path, ses->http_h.query) + 1;
     filename = malloc(filename_len);
     if(!filename) {
-        puts("memory error");
-        exit(EXIT_FAILURE);
+        res.status = UNAVAILABLE;
+        puts("memory error while generating response");
+        send_error(&fd, &res);
+        return(EXIT_FAILURE);
     }
     snprintf(filename, filename_len, "%s%s", log_files.dir_path, ses->http_h.query);
     unsigned int fsize = (uint32_t)(uintptr_t)g_hash_table_lookup(log_files.filelist, filename);
     if (!fsize) {
         printf("File %s not found\n", filename);
         res.status = NOT_FOUND;
-        headers_len = snprintf(NULL, 0, RESPONSE_ERROR, res.status, "NOT_FOUND", res.datetime);
-        headers = malloc(headers_len + 1);
-        if (!headers) {
-            puts("memory error");
-            exit(EXIT_FAILURE);
-        }
-        snprintf(headers, headers_len + 1, RESPONSE_ERROR, res.status, "NOT_FOUND", res.datetime);
-        send(fd, headers, headers_len, MSG_DONTWAIT);
-        free(headers);
+        send_error(&fd, &res);
         free(filename);
-        return;
+        return(EXIT_FAILURE);
     }
-    
-    FILE *fp;
     if ((fp=fopen(filename, "rb") ) == NULL) {
         printf("Error opening file %s\n", filename);
         res.status = FORBIDDEN;
-        headers_len = snprintf(NULL, 0, RESPONSE_ERROR, res.status, "FORBIDDEN", res.datetime);
-        headers = malloc(headers_len + 1);
-        if (!headers) {
-            puts("memory error");
-            exit(EXIT_FAILURE);
-        }
-        snprintf(headers, headers_len + 1, RESPONSE_ERROR, res.status, "FORBIDDEN", res.datetime);
-        
-        send(fd, headers, headers_len, MSG_DONTWAIT);
-        free(headers);
+        send_error(&fd, &res);
         free(filename);
-        return;
+        return(EXIT_FAILURE);
     }
 
-    res.status = OK;
     strncpy(res.content_type, "application/octet-stream", 50);
     res.content_length = fsize;
     headers_len = snprintf(NULL, 0, RESPONSE_TEMPLATE, res.status, "OK", res.datetime, res.content_type, res.content_length);
     file_data = malloc(fsize * sizeof(char) + headers_len + 1);
     if (!file_data) {
-        puts("memory error");
-        exit(EXIT_FAILURE);
+        puts("memory error while reading file");
+        free(filename);
+        res.status = UNAVAILABLE;
+        send_error(&fd, &res);
+        return(EXIT_FAILURE);
     }
     snprintf(file_data, headers_len + 1, RESPONSE_TEMPLATE, res.status, "OK", res.datetime, res.content_type, res.content_length);
-
     size_t nbytes = fread(file_data + headers_len, sizeof(char), fsize, fp) + headers_len;
     fclose(fp);
 
+    res.status = OK;
     int offset = 0;
     int sent = 0;
     while (nbytes > 0) {
@@ -228,19 +235,21 @@ void do_write(int fd, session* ses) // написать функцию форм�
         if (sent >= 0) {
             offset += sent;
             nbytes -= sent;
-            printf("sent bytes %d\n", sent);
+            // printf("sent bytes %d\n", sent);
         }
-
         else if (errno == EAGAIN || errno == EWOULDBLOCK) {
             continue;
         }
         else if (sent == -1) {
-            printf("errno %d\nreseting..\n", errno);
-            exit(EXIT_FAILURE); //возвращать из функции 1 с установкой errno, закрывать сокет
+            printf("errno %d while sending file\nreseting..\n", errno);
+            free(filename);
+            free(file_data);
+            return(EXIT_FAILURE);
         }
     }
     free(filename);
     free(file_data);
+    return(EXIT_SUCCESS);
 }
 
 void process_error(int fd)
@@ -254,28 +263,28 @@ void* get_files() {
     struct dirent *ep;
     char* dirfile;
     unsigned int fsize;
-    
-    
+
+
     while (1) {
         pthread_mutex_lock(&mutex);
         dp = opendir(log_files.dir_path);
         if (!dp)
         {
             printf("Couldn't open the directory %s\n", log_files.dir_path);
-            pthread_exit(NULL);
+            exit(EXIT_FAILURE);
         }
         while ((ep = readdir(dp)) != NULL) {
             if (strcmp(ep->d_name, ".") != 0 && strcmp(ep->d_name, "..") != 0) {
                 int dirfile_len = snprintf(NULL, 0, "%s%s", log_files.dir_path, ep->d_name) + 1;
                 dirfile = malloc(dirfile_len);
                 if(!dirfile) {
-                    puts("memory error");
-                    pthread_exit(NULL);
+                    puts("memory error while indexing folder");
+                    exit(EXIT_FAILURE);
                 }
                 snprintf(dirfile, dirfile_len, "%s%s", log_files.dir_path, ep->d_name);
                 fsize = (unsigned int) getFileSize(dirfile);
                 if (fsize == 0) {
-                    printf("Размер проверяемого файла %s 0. Пропускаем его.\n", dirfile);
+                    // printf("Размер проверяемого файла %s 0. Пропускаем его.\n", dirfile);
                     free(dirfile);
                     continue;
                 }
@@ -288,10 +297,10 @@ void* get_files() {
         (void)closedir(dp);
         log_files.indexed = 1;
         pthread_mutex_unlock(&mutex);
-        printf("directory indexed, next indexing in %d sec\n", DIR_REINDEXING_RATE);
-        sleep(DIR_REINDEXING_RATE);
+        // printf("directory indexed, next indexing in %d sec\n", DIR_REINDEXING_RATE);
+        // sleep(DIR_REINDEXING_RATE);
     }
-    
+
     pthread_exit(NULL);
 }
 
@@ -320,15 +329,14 @@ int main(int argc, char** argv) {
     }
     g_strfreev(arg_split);
 
-    
+
     log_files.indexed = 0;
     log_files.filelist = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
-    // log_files.filelist = g_hash_table_new(g_str_hash, g_str_equal);
     strncpy(log_files.dir_path, argv[1], MAX_PATH_LEN);
+
     pthread_t index_pid;
     pthread_create(&index_pid, NULL, get_files, NULL);
     pthread_detach(index_pid);
-    // get_files(&log_files);
 
     port = strtol(temp, &p, 10);
     if (*p) {
@@ -373,9 +381,8 @@ int main(int argc, char** argv) {
 
     struct epoll_event connev;
     int events_count = 1;
-    if (!log_files.indexed) {
-        printf("directory with files not indexed yet, waiting for %d sec\n", DIR_REINDEXING_RATE);
-        sleep(DIR_REINDEXING_RATE);
+    while (!log_files.indexed) {
+        sleep(1);
     }
 
     for (;;) {
@@ -418,11 +425,13 @@ int main(int argc, char** argv) {
                     else {
                         sessions[fd].status = WRITE;
                     }
-                    
+
                 }
 
                 if ((events[i].events & EPOLLOUT) && sessions[fd].status == WRITE) {
-                    do_write(fd, &sessions[fd]);
+                    if (do_write(fd, &sessions[fd])) {
+                        printf("error while sending respone, closing socket %d\n", fd);
+                    }
                     sessions[fd].status = READ;
                     epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
                     close(fd);
@@ -435,7 +444,7 @@ int main(int argc, char** argv) {
                     close(fd);
                 }
                 events_count--;
-                
+
             }
         }
     }
