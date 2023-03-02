@@ -1,3 +1,6 @@
+/* modern glibc will complain about the above if it doesn't see this. */
+#define _DEFAULT_SOURCE
+
 #include <sys/types.h> 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -9,9 +12,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/time.h>
-
-/* modern glibc will complain about the above if it doesn't see this. */
-#define _DEFAULT_SOURCE
 
 
 #define CHUNK_SIZE 2048
@@ -95,6 +95,7 @@ int main(int argc, char** argv)
     int error = getaddrinfo(HOSTNAME, SERVICE, &hints, &res);
     if (error) {
         printf("Не смогли получить ip-адрес сервера %s\n", HOSTNAME);
+        free(message);
         return EXIT_FAILURE;
     }
     struct timeval timeout;      
@@ -103,6 +104,7 @@ int main(int argc, char** argv)
     int sock_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP); 
     if (sock_fd < 0) {
         perror("socket");
+        free(message);
         return EXIT_FAILURE; 
     }
     if (setsockopt(sock_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) < 0) {
@@ -112,6 +114,7 @@ int main(int argc, char** argv)
     if(connect(sock_fd, res->ai_addr, res->ai_addrlen) < 0) {
         perror("connect");
         close(sock_fd);
+        free(message);
         return EXIT_FAILURE;
     }
     puts("connected");
@@ -119,6 +122,7 @@ int main(int argc, char** argv)
         perror("send");
         shutdown(sock_fd, SHUT_RDWR);
         close(sock_fd);
+        free(message);
         return EXIT_FAILURE;
     }
 
@@ -129,8 +133,10 @@ int main(int argc, char** argv)
             perror("send");
             shutdown(sock_fd, SHUT_RDWR);
             close(sock_fd);
+            free(message);
             return EXIT_FAILURE;
         }
+        free(message);
         data = recv_data(sock_fd, MESSAGE, buffer, &buffer_len);
         if (data) {
             for (int y = msglen; y < buffer_len - 1; y++) {
@@ -144,6 +150,7 @@ int main(int argc, char** argv)
             }
             shutdown(sock_fd, SHUT_RDWR);
             close(sock_fd);
+            freeaddrinfo(res);
             return EXIT_SUCCESS;
         }
     }
