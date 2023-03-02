@@ -13,28 +13,40 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <pthread.h>
 
-#define FILENAME "23_async_handout-12926-4862e4.pdf"
+
+#define RESPONSE_TEMPLATE "HTTP/1.1 %d %s\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nServer: sasha/1.0\r\nContent-Length: %u\r\nConnection: close\r\n\r\n"
+#define RESPONSE_ERROR "HTTP/1.1 %d %s\r\nDate: %s\r\nConnection: close\r\n\r\n"
 
 #define IPV4_ADDR_LEN 16
 #define MAX_EPOLL_EVENTS 128
-#define BACKLOG 128
-#define MTU_SIZE 1024
+#define DIR_REINDEXING_RATE 15 //sec
+
+#define MAX_PATH_LEN 1000
+#define MAX_REQUEST_LEN 2048
+#define MAX_QUERY_LEN 10240
 
 #define ANSI_COLOR_RED     "\x1b[31m"
 #define ANSI_COLOR_GREEN   "\x1b[32m"
 #define ANSI_COLOR_RESET   "\x1b[0m"
 #define ANSI_COLOR_BOLD    "\033[1m"
 
-enum STATUS {
-    INIT,
+enum SOCK_STATUS {
     READ,
     WRITE
 };
 
+enum RESPONE_STATUS {
+    OK = 200,
+    NOT_FOUND = 404,
+    FORBIDDEN = 403,
+    UNAVAILABLE = 500
+};
+
 typedef struct HTTP_HEADER {
     char method[10];
-    char query[10240];
+    char query[MAX_QUERY_LEN];
     char version[10];
 } header;
 
@@ -44,16 +56,27 @@ typedef struct HTTP_RESPONSE {
     char datetime[100];
     char content_type[50];
     char server[20];
-    size_t content_length;
+    unsigned int content_length;
 } response;
 
 typedef struct SESSION {
     int fd;
-    int status; //init/read/write
+    int status; //read/write
+    header http_h;
 } session;
 
+typedef struct LOGDIR {
+    char dir_path[MAX_PATH_LEN];
+    int indexed;
+    GHashTable* filelist;
+} logdir;
+
 session sessions[MAX_EPOLL_EVENTS];
-static char buffer[2048];
+static char buffer[MAX_REQUEST_LEN];
+static struct epoll_event events[MAX_EPOLL_EVENTS];
+logdir log_files;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
 
 size_t getFileSize(char* filename) {
     struct stat finfo;
@@ -64,29 +87,36 @@ size_t getFileSize(char* filename) {
     }
     else {
         printf("Нельзя найти файл %s или получить о нем информацию\n", filename);
-        exit(EXIT_FAILURE);
+        return(0);
     }
 }
 
-void parse_http(char* buffer, header* h) {
+// static void print(gpointer key, gpointer value, gpointer a)
+// {
+//     (void)a;
+//     printf("%s %u\n", (char*)key, (uint32_t)(uintptr_t)value);
+// }
+
+int parse_http(char* buffer, session* ses) {
     gchar** headers_split;
     gchar** title_split;
-
     headers_split = g_strsplit((const gchar *)buffer, "\r\n", -1);
     char* title = (char*)headers_split[0];
-    //написать цикл разобра остальных заголовков (while headers_split[x], x++)
     title_split = g_strsplit((const gchar *)title, " ", -1);
     if ((char*)title_split[0] && (char*)title_split[1] && (char*)title_split[2]) {
-        strncpy(h->method, (char*)title_split[0], 10);
-        strncpy(h->query, (char*)title_split[1], 10240);
-        strncpy(h->version, (char*)title_split[2], 10);
+        strncpy(ses->http_h.method, (char*)title_split[0], 10);
+        strncpy(ses->http_h.query, &title_split[1][1], MAX_QUERY_LEN);
+        strncpy(ses->http_h.version, (char*)title_split[2], 10);
     }
     else {
-        puts("Invalid method or query or protocol");
-        exit(EXIT_FAILURE);
+        puts("Invalid method or query or protocol in http request");
+        g_strfreev(headers_split);
+        g_strfreev(title_split);
+        return 1;
     }
     g_strfreev(headers_split);
     g_strfreev(title_split);
+    return 0;
 }
 
 int setnonblocking(int sock)
@@ -106,54 +136,87 @@ int setnonblocking(int sock)
  return 0;
 }
 
-void do_read(int fd)
+int do_read(int fd, session* ses)
 {
     int rc = recv(fd, buffer, sizeof(buffer), 0);
-    if (rc < 0) {
+    if (rc < 0 || rc > MAX_REQUEST_LEN) {
         perror("read");
-        return;
+        return 1;
     }
-    buffer[rc] = 0;
-    printf("read: %s\n", buffer);
-    header http_h = {"", "", ""};
-    //ограничить буфер, следить за его переполнением
-    parse_http(buffer, &http_h);
-    printf("HTTP version" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.version);
-    printf("HTTP method" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.method);
-    printf("HTTP query" ANSI_COLOR_GREEN " %s\n" ANSI_COLOR_RESET, http_h.query);
-    
+    if(parse_http(buffer, ses)) {
+        perror("read");
+        return 1;
+    }
+    return 0;
 }
 
-void do_write(int fd)
+void do_write(int fd, session* ses) // написать функцию формирующую респонз (передаем туда статус и структуру res)
 {
     response res;
-
+    int headers_len;
+    char* file_data;
+    char* headers;
     char buf[100];
+    char* filename;
     time_t now = time(0);
     struct tm tm = *gmtime(&now);
-    char filename[255] = FILENAME;
-    size_t fsize = getFileSize(filename);
 
-    printf("file size %lu\n", fsize);
+    strftime(buf, sizeof(buf), "%a, %d %b %Y %H:%M:%S %Z", &tm);
+    snprintf(res.datetime, sizeof(buf), "%s", buf);
 
-    strftime(buf, sizeof buf, "%a, %d %b %Y %H:%M:%S %Z", &tm);
-    snprintf(res.datetime, 100, "%s", buf);
-    res.status = 200;
-    strncpy(res.content_type, "application/octet-stream", 50);
-    res.content_length = fsize;
-
+    
+    int filename_len = snprintf(NULL, 0, "%s%s", log_files.dir_path, ses->http_h.query) + 1;
+    filename = malloc(filename_len);
+    if(!filename) {
+        puts("memory error");
+        exit(EXIT_FAILURE);
+    }
+    snprintf(filename, filename_len, "%s%s", log_files.dir_path, ses->http_h.query);
+    unsigned int fsize = (uint32_t)(uintptr_t)g_hash_table_lookup(log_files.filelist, filename);
+    if (!fsize) {
+        printf("File %s not found\n", filename);
+        res.status = NOT_FOUND;
+        headers_len = snprintf(NULL, 0, RESPONSE_ERROR, res.status, "NOT_FOUND", res.datetime);
+        headers = malloc(headers_len + 1);
+        if (!headers) {
+            puts("memory error");
+            exit(EXIT_FAILURE);
+        }
+        snprintf(headers, headers_len + 1, RESPONSE_ERROR, res.status, "NOT_FOUND", res.datetime);
+        send(fd, headers, headers_len, MSG_DONTWAIT);
+        free(headers);
+        free(filename);
+        return;
+    }
+    
     FILE *fp;
     if ((fp=fopen(filename, "rb") ) == NULL) {
         printf("Error opening file %s\n", filename);
-        exit (1);
+        res.status = FORBIDDEN;
+        headers_len = snprintf(NULL, 0, RESPONSE_ERROR, res.status, "FORBIDDEN", res.datetime);
+        headers = malloc(headers_len + 1);
+        if (!headers) {
+            puts("memory error");
+            exit(EXIT_FAILURE);
+        }
+        snprintf(headers, headers_len + 1, RESPONSE_ERROR, res.status, "FORBIDDEN", res.datetime);
+        
+        send(fd, headers, headers_len, MSG_DONTWAIT);
+        free(headers);
+        free(filename);
+        return;
     }
-    int headers_len = snprintf(NULL, 0, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nContent-Disposition: inline; filename=%s\r\nServer: sasha/1.0\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n", res.status, res.datetime, res.content_type, filename, res.content_length);
-    char* file_data = malloc(fsize * sizeof(char) + headers_len + 1);
+
+    res.status = OK;
+    strncpy(res.content_type, "application/octet-stream", 50);
+    res.content_length = fsize;
+    headers_len = snprintf(NULL, 0, RESPONSE_TEMPLATE, res.status, "OK", res.datetime, res.content_type, res.content_length);
+    file_data = malloc(fsize * sizeof(char) + headers_len + 1);
     if (!file_data) {
         puts("memory error");
         exit(EXIT_FAILURE);
     }
-    snprintf(file_data, headers_len + 1, "HTTP/1.1 %d OK\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nContent-Disposition: inline; filename=%s\r\nServer: sasha/1.0\r\nContent-Length: %lu\r\nConnection: close\r\n\r\n", res.status, res.datetime, res.content_type, filename, res.content_length);
+    snprintf(file_data, headers_len + 1, RESPONSE_TEMPLATE, res.status, "OK", res.datetime, res.content_type, res.content_length);
 
     size_t nbytes = fread(file_data + headers_len, sizeof(char), fsize, fp) + headers_len;
     fclose(fp);
@@ -173,13 +236,11 @@ void do_write(int fd)
         }
         else if (sent == -1) {
             printf("errno %d\nreseting..\n", errno);
-            exit(EXIT_FAILURE);
+            exit(EXIT_FAILURE); //возвращать из функции 1 с установкой errno, закрывать сокет
         }
     }
-
+    free(filename);
     free(file_data);
-    puts("closed");
-    
 }
 
 void process_error(int fd)
@@ -187,8 +248,56 @@ void process_error(int fd)
     printf("fd %d error!\n", fd);
 }
 
+void* get_files() {
 
-static struct epoll_event events[MAX_EPOLL_EVENTS];
+    DIR *dp;
+    struct dirent *ep;
+    char* dirfile;
+    unsigned int fsize;
+    
+    
+    while (1) {
+        pthread_mutex_lock(&mutex);
+        dp = opendir(log_files.dir_path);
+        if (!dp)
+        {
+            printf("Couldn't open the directory %s\n", log_files.dir_path);
+            pthread_exit(NULL);
+        }
+        while ((ep = readdir(dp)) != NULL) {
+            if (strcmp(ep->d_name, ".") != 0 && strcmp(ep->d_name, "..") != 0) {
+                int dirfile_len = snprintf(NULL, 0, "%s%s", log_files.dir_path, ep->d_name) + 1;
+                dirfile = malloc(dirfile_len);
+                if(!dirfile) {
+                    puts("memory error");
+                    pthread_exit(NULL);
+                }
+                snprintf(dirfile, dirfile_len, "%s%s", log_files.dir_path, ep->d_name);
+                fsize = (unsigned int) getFileSize(dirfile);
+                if (fsize == 0) {
+                    printf("Размер проверяемого файла %s 0. Пропускаем его.\n", dirfile);
+                    free(dirfile);
+                    continue;
+                }
+                else {
+                    g_hash_table_insert(log_files.filelist, (gpointer)g_strdup(dirfile), (gpointer)(uintptr_t)fsize);
+                }
+                free(dirfile);
+            }
+        }
+        (void)closedir(dp);
+        log_files.indexed = 1;
+        pthread_mutex_unlock(&mutex);
+        printf("directory indexed, next indexing in %d sec\n", DIR_REINDEXING_RATE);
+        sleep(DIR_REINDEXING_RATE);
+    }
+    
+    pthread_exit(NULL);
+}
+
+void clear_key(gpointer data) {
+    free(data);
+}
 
 int main(int argc, char** argv) {
     if (argc != 3) {
@@ -199,7 +308,6 @@ int main(int argc, char** argv) {
     char* p;
     char temp[6] = {0};
     char address[IPV4_ADDR_LEN];
-    // session sessions[MAX_EPOLL_EVENTS];
 
     gchar** arg_split = g_strsplit((const gchar *)argv[2], ":", -1);
     if ((char*)arg_split[0] && (char*)arg_split[1]) {
@@ -211,6 +319,16 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     g_strfreev(arg_split);
+
+    
+    log_files.indexed = 0;
+    log_files.filelist = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
+    // log_files.filelist = g_hash_table_new(g_str_hash, g_str_equal);
+    strncpy(log_files.dir_path, argv[1], MAX_PATH_LEN);
+    pthread_t index_pid;
+    pthread_create(&index_pid, NULL, get_files, NULL);
+    pthread_detach(index_pid);
+    // get_files(&log_files);
 
     port = strtol(temp, &p, 10);
     if (*p) {
@@ -240,7 +358,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    if (listen(listenfd, BACKLOG) < 0) { //BACKLOG - кол-во коннектов, которые будут приниматься сервером
+    if (listen(listenfd, MAX_EPOLL_EVENTS) < 0) {
         perror("listen");
         return EXIT_FAILURE;
     }
@@ -255,6 +373,10 @@ int main(int argc, char** argv) {
 
     struct epoll_event connev;
     int events_count = 1;
+    if (!log_files.indexed) {
+        printf("directory with files not indexed yet, waiting for %d sec\n", DIR_REINDEXING_RATE);
+        sleep(DIR_REINDEXING_RATE);
+    }
 
     for (;;) {
         int nfds = epoll_wait(efd, events, MAX_EPOLL_EVENTS, -1);
@@ -275,12 +397,10 @@ int main(int argc, char** argv) {
                 connev.data.fd = connfd;
                 sessions[connfd].fd = connfd;
                 sessions[connfd].status = READ;
-                printf("new socket %d, curr status READ\n", connfd);
                 connev.events = EPOLLIN | EPOLLOUT | EPOLLET | EPOLLRDHUP;
                 if (epoll_ctl(efd, EPOLL_CTL_ADD, connfd, &connev) < 0) {
                     perror("epoll_ctl");
-                    sessions[connfd].status = INIT;
-                    printf("epoll_ctl socket %d, curr status INIT\n", connfd);
+                    sessions[connfd].status = READ;
                     close(connfd);
                     continue;
                 }
@@ -290,23 +410,27 @@ int main(int argc, char** argv) {
                 int fd = events[i].data.fd;
 
                 if ((events[i].events & EPOLLIN) && sessions[fd].status == READ) {
-                    do_read(fd);
-                    sessions[fd].status = WRITE;
-                    printf("read from socket %d, ready to wite, curr status WRITE\n", fd);
+                    if (do_read(fd, &sessions[fd])) {
+                        sessions[fd].status = READ;
+                        epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                        close(fd);
+                    }
+                    else {
+                        sessions[fd].status = WRITE;
+                    }
+                    
                 }
 
                 if ((events[i].events & EPOLLOUT) && sessions[fd].status == WRITE) {
-                    do_write(fd);
-                    sessions[fd].status = INIT;
-                    printf("wrote to socket %d, curr status INIT\n", fd);
+                    do_write(fd, &sessions[fd]);
+                    sessions[fd].status = READ;
                     epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
                     close(fd);
                 }
 
                 if (events[i].events & EPOLLRDHUP) {
                     process_error(fd);
-                    sessions[fd].status = INIT;
-                    printf("error in socket %d, curr status INIT\n", fd);
+                    sessions[fd].status = READ;
                     epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
                     close(fd);
                 }
@@ -315,5 +439,7 @@ int main(int argc, char** argv) {
             }
         }
     }
- return 0;
+    g_hash_table_destroy(log_files.filelist);
+    pthread_mutex_destroy(&mutex);
+    return 0;
 }
