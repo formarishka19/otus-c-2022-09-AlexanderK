@@ -30,7 +30,6 @@
 
 struct timespec start, finish;
 double elapsed;
-unsigned long total_bytes = 0;
 
 typedef struct { 
     char url[MAX_URL_LEN];
@@ -63,7 +62,11 @@ typedef struct {
     int status;
     GHashTable* hash_table_url;
     GHashTable* hash_table_ref;
+    GArray* url_arr;
+    GArray* ref_arr;
     char temp_buffer[MAX_LOGENTRY_LEN];
+    unsigned long url_count;
+    unsigned long ref_count;
 } worker;
 
 int compare_url(const void *a, const void *b) {
@@ -143,10 +146,11 @@ void checkArgs(int *argc, char* argv[]) {
     }
 }
 
-void parse_log_record(char* data, GHashTable* ht_url, GHashTable* ht_ref) {
+void parse_log_record(char* data, GHashTable* ht_url, unsigned long* total_urls, GHashTable* ht_ref, unsigned long* total_refs, GArray* u_arr, GArray* r_arr) {
     char* part_string;
     char* saveptr;
     int x = 0;
+    record* cur_record = NULL;
     row row_parsed;
     char* temp;
     gchar** url_split;
@@ -157,6 +161,8 @@ void parse_log_record(char* data, GHashTable* ht_url, GHashTable* ht_ref) {
         switch (x)
         {
         case 1:
+            // strncpy(row_parsed.url, part_string, strlen(part_string)+1); //почему-то после удаления этой строки все валится(((
+            // upd: валилось именно при компиляции, не так выразился. решилось отдельным объявлением gchar** url_split вначале функции
             url_split = g_strsplit((const gchar *)part_string, " ", -1);
             if ((char*)url_split[1] != NULL) {
                 strncpy(row_parsed.url, (char*)url_split[1], MAX_URL_LEN);
@@ -190,74 +196,96 @@ void parse_log_record(char* data, GHashTable* ht_url, GHashTable* ht_ref) {
         x++;
         part_string = strtok_r(NULL,"\"", &saveptr);
     }
-    unsigned int url_bytes = (uint32_t)(uintptr_t)g_hash_table_lookup(ht_url, row_parsed.url);
-    if (!url_bytes) {
-        g_hash_table_insert(ht_url, (gpointer)g_strdup(row_parsed.url), (gpointer)(uintptr_t)row_parsed.bytes);
+    if (g_hash_table_contains(ht_url, row_parsed.url)) {
+        unsigned long index = (unsigned long)g_hash_table_lookup(ht_url, row_parsed.url);
+        cur_record = &g_array_index(u_arr, record, index);
+        cur_record->count = cur_record->count + 1;
+        cur_record->bytes = cur_record->bytes + row_parsed.bytes;
     }
     else {
-        g_hash_table_insert(ht_url, (gpointer)g_strdup(row_parsed.url), (gpointer)(uintptr_t)(url_bytes + row_parsed.bytes));
+        unsigned long cur_counter = *total_urls;
+        *total_urls = *total_urls + 1;
+        record new_record;
+        strncpy(new_record.url, row_parsed.url, MAX_URL_LEN);
+        new_record.count = 1;
+        new_record.bytes = row_parsed.bytes;
+        g_array_append_val(u_arr, new_record);
+        g_hash_table_insert(ht_url, (gpointer)(row_parsed.url), (gpointer)cur_counter);
     }
-    unsigned int ref_count = (uint32_t)(uintptr_t)g_hash_table_lookup(ht_ref, row_parsed.ref);
-    if (!ref_count) {
-        g_hash_table_insert(ht_ref, (gpointer)g_strdup(row_parsed.ref), (gpointer)(uintptr_t)1);
-    }
-    else {
-        g_hash_table_insert(ht_ref, (gpointer)g_strdup(row_parsed.ref), (gpointer)(uintptr_t)(ref_count + 1));
-    }    
-}
-
-void clear_key(gpointer data) {
-    free(data);
-}
-
-void fetch_url_ht(gpointer key, gpointer value, gpointer array) {
-    record rec;
-    strncpy(rec.url, (char*)key, MAX_URL_LEN);
-    rec.bytes = (uint32_t)(uintptr_t)value;
-    total_bytes += rec.bytes;
-    g_array_append_val(array, rec);
-}
-
-void fetch_ref_ht(gpointer key, gpointer value, gpointer array) {
-    record rec;
-    strncpy(rec.url, (char*)key, MAX_URL_LEN);
-    rec.count = (uint32_t)(uintptr_t)value;
-    g_array_append_val(array, rec);
-}
-
-void fetch_url_results(gpointer key, gpointer value, gpointer url_data) {
-
-    unsigned int url_bytes = (uint32_t)(uintptr_t)g_hash_table_lookup(url_data, key);
-    if (!url_bytes) {
-        g_hash_table_insert(url_data, (gpointer)g_strdup((char*)key), (gpointer)(uintptr_t)value);
+    if (g_hash_table_contains(ht_ref, row_parsed.ref)) {
+        unsigned long index = (unsigned long)g_hash_table_lookup(ht_ref, row_parsed.ref);
+        cur_record = &g_array_index(r_arr, record, index);
+        cur_record->count = cur_record->count + 1;
     }
     else {
-        g_hash_table_insert(url_data, (gpointer)g_strdup((char*)key), (gpointer)(url_bytes + (uintptr_t)value));
+        unsigned long cur_counter_ref = *total_refs;
+        *total_refs = *total_refs + 1;
+        record new_record;
+        strncpy(new_record.url, row_parsed.ref, MAX_URL_LEN);
+        new_record.count = 1;
+        g_array_append_val(r_arr, new_record);
+        g_hash_table_insert(ht_ref, (gpointer)(row_parsed.ref), (gpointer)cur_counter_ref);
     }
+    
 }
 
-void fetch_ref_results(gpointer key, gpointer value, gpointer ref_data) {
-    unsigned int ref_count = (uint32_t)(uintptr_t)g_hash_table_lookup(ref_data, key);
-    if (!ref_count) {
-        g_hash_table_insert(ref_data, (gpointer)g_strdup((char*)key), (gpointer)(uintptr_t)value);
-    }
-    else {
-        g_hash_table_insert(ref_data, (gpointer)g_strdup((char*)key), (gpointer)(ref_count + (uintptr_t)value));
-    }
-}
+int worker_fetch(worker* w, unsigned long *total_req, unsigned long *total_refs, unsigned long *total_bytes, unsigned long *res_url_count, GHashTable* ht_url, GHashTable* ht_ref, GArray* url_arr, GArray* ref_arr) {
 
-int worker_fetch(worker* w, GHashTable* ht_url, GHashTable* ht_ref) {
-    g_hash_table_foreach(w->hash_table_url, fetch_url_results, ht_url);
-    g_hash_table_foreach(w->hash_table_ref, fetch_ref_results, ht_ref);
+    record* cur_record;
+    record* u_element;
+    record* r_element;
+    unsigned long u_counter;
+    unsigned long r_counter;
+    unsigned long cur_counter_url;
+    unsigned long cur_counter_ref;
+    char ref[MAX_URL_LEN];
+    char url[MAX_URL_LEN];
 
+    for (u_counter = 0; u_counter < w->url_count; u_counter++) {
+        u_element = &g_array_index(w->url_arr, record, u_counter);
+        strncpy(url, u_element->url, MAX_URL_LEN);
+        if (g_hash_table_contains(ht_url, url)) {
+            unsigned long index = (unsigned long)g_hash_table_lookup(ht_url, url);
+            cur_record = &g_array_index(url_arr, record, index);
+            cur_record->count = cur_record->count + u_element->count;
+            cur_record->bytes = cur_record->bytes + u_element->bytes;
+        }
+        else {
+            cur_counter_url = *res_url_count;
+            g_array_append_val(url_arr, *u_element);
+            g_hash_table_insert(ht_url, (gpointer)(url), (gpointer)cur_counter_url);
+            *res_url_count = *res_url_count + 1;
+        }
+        *total_req = *total_req + u_element->count;
+        *total_bytes = *total_bytes + u_element->bytes;
+    }
+    for (r_counter = 0; r_counter < w->ref_count; r_counter++) {
+        r_element = &g_array_index(w->ref_arr, record, r_counter);
+        strncpy(ref, r_element->url, MAX_URL_LEN);
+        if (g_hash_table_contains(ht_ref, ref)) {
+            unsigned long index = (unsigned long)g_hash_table_lookup(ht_ref, ref);
+            cur_record = &g_array_index(ref_arr, record, index);
+            cur_record->count = cur_record->count + r_element->count;
+        }
+        else {
+            cur_counter_ref = *total_refs;
+            g_array_append_val(ref_arr, *r_element);
+            g_hash_table_insert(ht_ref, (gpointer)(ref), (gpointer)cur_counter_ref);
+            *total_refs = *total_refs + 1;
+        }
+    }
     return 0;
 }
 
 int worker_load(worker* w, logfile* file) {
     w->status = 1;
-    w->hash_table_url = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
-    w->hash_table_ref = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
+    w->hash_table_url = g_hash_table_new(g_str_hash, NULL);
+    w->hash_table_ref = g_hash_table_new(g_str_hash, NULL);
+    w->url_arr = g_array_sized_new(FALSE, FALSE, sizeof (record), START_LOG_ENTRIES);
+    w->ref_arr = g_array_sized_new(FALSE, FALSE, sizeof (record), START_LOG_ENTRIES);
     w->file = *file;
+    w->url_count = 0;
+    w->ref_count = 0;
     memset(w->temp_buffer, 0, MAX_LOGENTRY_LEN);
     return(EXIT_SUCCESS);
 }
@@ -266,6 +294,8 @@ int worker_clear(worker* w) {
     w->status = 0;
     g_hash_table_destroy(w->hash_table_url);
     g_hash_table_destroy(w->hash_table_ref);
+    g_array_free(w->url_arr, 1);
+    g_array_free(w->ref_arr, 1);
     return(EXIT_SUCCESS);
 }
 
@@ -284,7 +314,7 @@ void* thread_func(void* arg) {
         else {
             a->temp_buffer[k + 1] = '\0';
             k = 0;
-            parse_log_record(a->temp_buffer, a->hash_table_url, a->hash_table_ref);
+            parse_log_record(a->temp_buffer, a->hash_table_url, &(a->url_count), a->hash_table_ref, &(a->ref_count), a->url_arr, a->ref_arr);
             memset(a->temp_buffer, 0, MAX_LOGENTRY_LEN);
         }
         i++;
@@ -314,12 +344,16 @@ int main(int argc, char* argv[]) {
     }
     GSList* iterator = log_files.list;
 
-    GHashTable* hash_table_url_res = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
-    GHashTable* hash_table_ref_res = g_hash_table_new_full(g_str_hash, g_str_equal, clear_key, NULL);
+    GHashTable* hash_table_url_res = g_hash_table_new(g_str_hash, NULL);
+    GHashTable* hash_table_ref_res = g_hash_table_new(g_str_hash, NULL);
     GArray* url_arr_cobmined;
     GArray* ref_arr_cobmined;
     url_arr_cobmined = g_array_sized_new(FALSE, FALSE, sizeof (record), START_LOG_ENTRIES);
     ref_arr_cobmined = g_array_sized_new(FALSE, FALSE, sizeof (record), START_LOG_ENTRIES);
+    unsigned long total_requests = 0;
+    unsigned long total_refs = 0;
+    unsigned long total_bytes = 0;
+    unsigned long res_url_count = 0;
 
     clock_gettime(CLOCK_MONOTONIC, &start);
 
@@ -339,25 +373,21 @@ int main(int argc, char* argv[]) {
             threads_count--;
             pthread_join(workers[threads_count].id, NULL);
             puts(workers[threads_count].file.filepath);
-            worker_fetch(&workers[threads_count], hash_table_url_res, hash_table_ref_res);
+            worker_fetch(&workers[threads_count], &total_requests, &total_refs, &total_bytes, &res_url_count, hash_table_url_res, hash_table_ref_res, url_arr_cobmined, ref_arr_cobmined);
             worker_clear(&workers[threads_count]);
             printf("active threads %d\n", threads_count);
         }
         while (threads_count);
     }
 
-    
-    g_hash_table_foreach(hash_table_url_res, fetch_url_ht, url_arr_cobmined);
-    g_hash_table_foreach(hash_table_ref_res, fetch_ref_ht, ref_arr_cobmined);
-
     g_array_sort(url_arr_cobmined, (GCompareFunc)compare_url);
     g_array_sort(ref_arr_cobmined, (GCompareFunc)compare_ref);
 
     puts("\n");
-    printf(ANSI_COLOR_BOLD "Total bytes " ANSI_COLOR_RED "%lu\n" ANSI_COLOR_RESET, total_bytes);
+    printf(ANSI_COLOR_BOLD "Total bytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET ANSI_COLOR_BOLD ", total requests " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET "\n" ANSI_COLOR_RESET, total_bytes, total_requests);
     for (int t = 0; t < 10; t++) {
         record* rec = &g_array_index(url_arr_cobmined, record, t);
-        printf("%d URL: " ANSI_COLOR_GREEN "%s" ANSI_COLOR_RESET "\tbytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET "\n", t+1, rec->url, rec->bytes);
+        printf("%d URL: " ANSI_COLOR_GREEN "%s" ANSI_COLOR_RESET "\tbytes " ANSI_COLOR_RED "%lu" ANSI_COLOR_RESET ", requests " ANSI_COLOR_BLUE "%ld" ANSI_COLOR_RESET "\n", t+1, rec->url, rec->bytes, rec->count);
     }
     puts("\n");
     puts("TOP REFERERS");
