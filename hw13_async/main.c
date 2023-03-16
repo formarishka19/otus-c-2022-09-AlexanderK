@@ -56,7 +56,6 @@ typedef struct SESSION {
     int fd;
     int status; //read/write
     char* query;
-    // char query[MAX_QUERY_LEN];
 } session;
 
 
