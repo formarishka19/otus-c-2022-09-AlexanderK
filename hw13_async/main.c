@@ -12,8 +12,11 @@
 #include <glib.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <linux/limits.h>
 #include <unistd.h>
 
+#define S_IFMT 0170000
+#define S_IFREG 0100000
 
 #define RESPONSE_TEMPLATE "HTTP/1.1 %d %s\r\nDate: %s\r\nContent-Type: %s; charset=UTF-8\r\nServer: sasha/1.0\r\nContent-Length: %u\r\nConnection: close\r\n\r\n"
 #define RESPONSE_ERROR "HTTP/1.1 %d %s\r\nDate: %s\r\nConnection: close\r\n\r\n"
@@ -21,9 +24,7 @@
 
 #define IPV4_ADDR_LEN 16
 #define MAX_EPOLL_EVENTS 128
-// #define DIR_REINDEXING_RATE 60 //sec
 
-#define MAX_PATH_LEN 1000
 #define MAX_REQUEST_LEN 2048
 #define MAX_QUERY_LEN 10240
 
@@ -54,27 +55,15 @@ typedef struct HTTP_RESPONSE {
 typedef struct SESSION {
     int fd;
     int status; //read/write
-    char query[MAX_QUERY_LEN];
+    char* query;
+    // char query[MAX_QUERY_LEN];
 } session;
 
 
 static char buffer[MAX_REQUEST_LEN];
 static struct epoll_event events[MAX_EPOLL_EVENTS];
-char directory[MAX_PATH_LEN];
+char directory[PATH_MAX];
 
-
-size_t getFileSize(char* filename) {
-    struct stat finfo;
-    int status;
-    status = stat(filename, &finfo);
-    if(status == 0) {
-        return finfo.st_size;
-    }
-    else {
-        printf("Нельзя найти файл %s или получить о нем информацию\n", filename);
-        return(0);
-    }
-}
 
 void send_error(int fd, response* resp) {
     char status_verbose[15] = {0};
@@ -111,7 +100,8 @@ int parse_http(char* buffer, session* ses) {
     char* title = (char*)headers_split[0];
     title_split = g_strsplit((const gchar *)title, " ", -1);
     if ((char*)title_split[0] && (char*)title_split[1] && (char*)title_split[2]) {
-        strncpy(ses->query, &title_split[1][1], MAX_QUERY_LEN);
+        ses->query = g_strdup(&title_split[1][1]);
+        // strncpy(ses->query, &title_split[1][1], MAX_QUERY_LEN); 
     }
     else {
         puts("Invalid method or query or protocol in http request");
@@ -179,7 +169,12 @@ int do_write(session* ses) {
         return(EXIT_FAILURE);
     }
     snprintf(filename, filename_len, "%s%s", directory, ses->query);
-    size_t fsize = getFileSize(filename);
+
+    struct stat finfo;
+    size_t fsize = 0;
+    if (!stat(filename, &finfo) && ((finfo.st_mode & S_IFMT) == S_IFREG)) {
+        fsize = finfo.st_size;
+    }
 
     if (!fsize) {
         printf("File %s not found\n", filename);
@@ -198,9 +193,8 @@ int do_write(session* ses) {
         return(EXIT_FAILURE);
     }
 
-    res.content_type = malloc(strlen(CONTENT_TYPE) * (sizeof(char) + 1));
-    strcpy(res.content_type, CONTENT_TYPE);
 
+    res.content_type = g_strdup(CONTENT_TYPE);
     res.content_length = fsize;
     res.status = OK;
     headers_len = snprintf(NULL, 0, RESPONSE_TEMPLATE, res.status, "OK", res.datetime, res.content_type, res.content_length);
@@ -271,7 +265,7 @@ int main(int argc, char** argv) {
     }
     g_strfreev(arg_split);
 
-    strncpy(directory, argv[1], MAX_PATH_LEN);
+    strncpy(directory, argv[1], PATH_MAX);
 
     port = strtol(temp, &p, 10);
     if (*p) {
