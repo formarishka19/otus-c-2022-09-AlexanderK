@@ -345,6 +345,7 @@ int main(int argc, char** argv) {
                 if ((events[i].events & EPOLLIN) && sess->status == READ) {
                     if (do_read(sess)) {
                         epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                        free(sess->query);
                         free(sess);
                         close(fd);
                     }
@@ -358,12 +359,14 @@ int main(int argc, char** argv) {
                         printf("error while sending respone, closing socket %d\n", fd);
                     }
                     epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                    free(sess->query);
                     free(sess);
                     close(fd);
                 }
                 if (events[i].events & EPOLLRDHUP) {
                     process_error(fd);
                     epoll_ctl(efd, EPOLL_CTL_DEL, fd, &connev);
+                    free(sess->query);
                     free(sess);
                     close(fd);
                 }
