@@ -250,7 +250,7 @@ int worker_fetch(worker* w, GHashTable* ht_url, GHashTable* ht_ref) {
     g_hash_table_foreach(w->hash_table_url, fetch_url_results, ht_url);
     g_hash_table_foreach(w->hash_table_ref, fetch_ref_results, ht_ref);
 
-    return 0;
+    return(EXIT_SUCCESS);
 }
 
 int worker_load(worker* w, logfile* file) {

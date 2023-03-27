@@ -1,0 +1,11 @@
+
+[Unit]
+Description=Generating logs
+[Service]
+Type=simple
+Restart=always
+WorkingDirectory=~/logsend/build
+ExecStart=/usr/bin/python3 generator.py
+User=parus
+[Install]
+WantedBy=multi-user.target
