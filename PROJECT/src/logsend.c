@@ -38,7 +38,7 @@ enum CLIENT_STATUS {
 };
 
 char filepath[PATH_MAX] = {0};
-int port = 8080;
+int port;
 int daemon_mode = 0;
 
 void checkArgs(int* argc, char* argv[]) {
@@ -339,6 +339,10 @@ void onmessage(ws_cli_conn_t *client, const unsigned char *msg, uint64_t size, i
 	syslog(LOG_INFO, "Received message: %s (size: %" PRId64 ", type: %d), from: %s\n", msg, size, type, cli);
 	
 	char* message = malloc(size + 1);
+	if (!message) {
+		syslog(LOG_CRIT, "Memory error at line %d. Exiting process.", __LINE__);
+		exit(EXIT_FAILURE);
+	}
 	strncpy(message, (const char *)msg, size);
 	message[size] = '\0';
 
