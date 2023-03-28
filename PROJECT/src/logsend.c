@@ -313,8 +313,7 @@ void* tailing_logs(void* arg) {
 
 void onopen(ws_cli_conn_t *client)
 {
-	char *cli;
-	cli = ws_getaddress(client);
+	char* cli = ws_getaddress(client);
 	client->status = CONNECTED;
 	client->tailing_t = 0;
 	syslog(LOG_INFO, "Connection opened, addr: %s", cli);
@@ -325,8 +324,7 @@ void onopen(ws_cli_conn_t *client)
 
 void onclose(ws_cli_conn_t *client)
 {
-	char *cli;
-	cli = ws_getaddress(client);
+	char* cli = ws_getaddress(client);
 	if (client->query) {
 		free(client->query);
 	}
@@ -337,8 +335,7 @@ void onclose(ws_cli_conn_t *client)
 }
 
 void onmessage(ws_cli_conn_t *client, const unsigned char *msg, uint64_t size, int type) {
-	char *cli;
-	cli = ws_getaddress(client);
+	char* cli = ws_getaddress(client);
 	syslog(LOG_INFO, "Received message: %s (size: %" PRId64 ", type: %d), from: %s\n", msg, size, type, cli);
 	
 	char* message = malloc(size + 1);
@@ -348,9 +345,8 @@ void onmessage(ws_cli_conn_t *client, const unsigned char *msg, uint64_t size, i
 	if (strchr(message, ':') != NULL) {
 		if (client->status == CONNECTED) {
 			char* saveptr;
-			char* msg_cmd;
 			char* msg_temp = strndup((const char *)msg, size);
-			msg_cmd = strtok_r(msg_temp, ":", &saveptr);
+			char* msg_cmd = strtok_r(msg_temp, ":", &saveptr);
 			if (msg_cmd != NULL && (strncmp(msg_cmd, "tail", 4) == 0)) {
 				client->status = TAILING;
 				syslog(LOG_INFO, "Client %s status changed to TAILING", cli);
