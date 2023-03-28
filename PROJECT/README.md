@@ -12,7 +12,8 @@
 mkdir build && cd build/
 cmake ..
 make
-./logsend/logsend ./test.log -d
+cd bin
+./bin/logsend -f ../src/test.log -p 33223 -d
 ```
 
 ### Команды (в виде сообщений к серверу)

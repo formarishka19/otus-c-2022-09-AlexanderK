@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <getopt.h>
 #include <unistd.h>
 #include "ws.c"
 #include "ws.h"
@@ -20,30 +21,48 @@
 #include <pthread.h>
 
 
-#define PORT 33223
 #define LAST_LOG_OFFSET 1024 //bytes from EOF
 #define APP_NAME "LOGSERVER"
+#define START_ARGS "\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n" 			\
+        "Программа принимает на вход следующие аргументы:\n" 		\
+		"\t-f путь до файла с логами \n" 							\
+		"\t-p порт, на котором будет работать сервер \n" 	\
+		"\t-d опциональный ключ для режима демонизации\n\n" 		\
+        "Пример запуска\n" 											\
+        "%s -f ./test.log -p 33223 -d\n\n" 							\
+        "--- Повторите запуск правильно ---\n\n" 					\
 
 enum CLIENT_STATUS {
     CONNECTED,
     TAILING
 };
 
-char filepath[PATH_MAX] = "./test.log";
+char filepath[PATH_MAX] = {0};
+int port = 8080;
+int daemon_mode = 0;
 
 void checkArgs(int* argc, char* argv[]) {
-    if (*argc < 2 || *argc > 3) {
-        printf("\n\n --- ! ОШИБКА ЗАПУСКА ----\n\n"
-        "Программа принимает на вход путь до файла с логами \nи опциональный ключ -d для режима демонизации\n"
-        "------ Синтаксис ------\n"
-        "%s <log filepath>\n"
-        "%s <log filepath> -d\n"
-        "-----------------------\n\n"
-        "Пример запуска\n"
-        "%s ./test.log -d \n\n"
-        "--- Повторите запуск правильно ---\n\n", argv[0], argv[0], argv[0]);
+    if (*argc < 5 || *argc > 6) {
+        printf(START_ARGS, argv[0]);
         exit (EXIT_FAILURE);
     }
+	int opt;
+	while ((opt = getopt(*argc, argv, "f:p:d")) != -1) {
+		switch (opt) {
+			case 'f':
+				strncpy(filepath, optarg, PATH_MAX);
+				break;
+			case 'p':
+				port = atoi(optarg);
+				break;
+			case 'd':
+				daemon_mode = 1;
+				break;
+			default: /* '?' */
+				printf(START_ARGS, argv[0]);
+        		exit (EXIT_FAILURE);
+		}
+	}
 }
 
 void daemonize(const char* cmd)
@@ -144,29 +163,22 @@ static size_t get_file_size(char* filename) {
 }
 
 static void get_last_logs(size_t size, size_t offset, char* buffer) {
-
-	FILE* fp = fopen(filepath, "r");
-	if (fp == NULL)
-	{
+	int fd = open(filepath, O_RDONLY);
+	if (fd < 0) {
 		syslog(LOG_CRIT, "Cannot open file '%s'. Exiting process.", filepath);
 		exit(EXIT_FAILURE);
 	}
-	pread(fileno(fp), buffer, size, offset);
-	fclose(fp);
+	pread(fd, buffer, size, offset);
+	close(fd);
 }
 
 void* tailing_logs(void* arg) {
 
 	ws_cli_conn_t* client = arg;
-	char *cli;
-	cli = ws_getaddress(client);
-
+	char* cli = ws_getaddress(client);
 	char* buf;
 
-	size_t fsize;
-	size_t fsize_current;
-
-	fsize = get_file_size(filepath);
+	size_t fsize = get_file_size(filepath);
 
 	if (fsize < LAST_LOG_OFFSET) {
 		buf = malloc(fsize + 1);
@@ -186,10 +198,12 @@ void* tailing_logs(void* arg) {
 		get_last_logs(LAST_LOG_OFFSET, fsize - LAST_LOG_OFFSET, buf);
 		buf[LAST_LOG_OFFSET] = '\0';
 	}
+
 	char* part_string;
 	char* saveptr;
-	part_string = strtok_r(buf, "\n", &saveptr);
 	int count = 0;
+
+	part_string = strtok_r(buf, "\n", &saveptr);
 	while (part_string != NULL)
 	{	
 		if (count != 0) {
@@ -207,39 +221,33 @@ void* tailing_logs(void* arg) {
 		count++;
 		part_string = strtok_r(NULL,"\n", &saveptr);
 	}
-	count = 0;
 	free(part_string);
 	free(buf);
 
-	int fd, poll_num;
-	int wd;
-	nfds_t nfds;
-	struct pollfd fds[1];
-	int changed = 0;
-
-
-	fd = inotify_init1(IN_NONBLOCK);
+	int fd = inotify_init1(IN_NONBLOCK);
 	if (fd == -1) {
 		syslog(LOG_CRIT, "inotify_init1 error. Exiting process.");
 		exit(EXIT_FAILURE);
 	}
 
-	wd = inotify_add_watch(fd, filepath, IN_MODIFY);
+	int wd = inotify_add_watch(fd, filepath, IN_MODIFY);
 	if (wd == -1) {
 		syslog(LOG_CRIT, "Cannot watch '%s': %s. Exiting process.", filepath, strerror(errno));
 		exit(EXIT_FAILURE);
 	}
 
 	/* Prepare for polling. */
-	nfds = 1;
+	nfds_t nfds = 1;
+	struct pollfd fds[1];
 	fds[0].fd = fd;                 /* Inotify input */
 	fds[0].events = POLLIN;
 
 	/* Wait for events. */
 
 	syslog(LOG_INFO, "Client: %s Tailing logs", cli);
+
 	while (client->status == TAILING && get_client_state(client) > -1) {
-		poll_num = poll(fds, nfds, 3000);
+		int poll_num = poll(fds, nfds, 3000);
 		if (poll_num == -1) {
 			if (errno == EINTR)
 				continue;
@@ -248,9 +256,9 @@ void* tailing_logs(void* arg) {
 		}
 		if (poll_num > 0) {
 			if (fds[0].revents & POLLIN) {
-				changed = handle_events(fd);
+				int changed = handle_events(fd);
 				if (changed) {
-					fsize_current = get_file_size(filepath);
+					size_t fsize_current = get_file_size(filepath);
 					if (fsize_current > fsize) {
 						buf = malloc(fsize_current - fsize + 1);
 						if (!buf) {
@@ -389,36 +397,24 @@ void onmessage(ws_cli_conn_t *client, const unsigned char *msg, uint64_t size, i
 	free(message);
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char** argv) {
     checkArgs(&argc, argv);
-    int daemon = 0;
-	strncpy(filepath, argv[1], PATH_MAX);
-	FILE* fp = fopen(filepath, "rb");
-	if (fp == NULL) {
-        printf("Указан неверный файл '%s', повторите запуск правильно!\n", filepath);
-        return(EXIT_FAILURE);
-    } else {
-		fclose(fp);
-	}
-	if ((argc == 3) && (strcmp(argv[2], "-d\0") == 0)) {
-		daemon = 1;
-	}
 	openlog(APP_NAME, LOG_CONS | LOG_PID, LOG_DAEMON);
     (void)argc;
     
-    if (daemon) {
+    if (daemon_mode) {
         daemonize(APP_NAME);
-		syslog(LOG_INFO, "WebSocket сервер запущен в режиме демона");
+		syslog(LOG_INFO, "WebSocket сервер запущен в режиме демона на порту %d", port);
     }
 	else {
-		syslog(LOG_INFO, "WebSocket сервер запущен в режиме терминала");
+		syslog(LOG_INFO, "WebSocket сервер запущен в режиме терминала на порту %d", port);
 	}
 	
 	struct ws_events evs;
 	evs.onopen    = &onopen;
 	evs.onclose   = &onclose;
 	evs.onmessage = &onmessage;
-	ws_socket(&evs, PORT, 0, 1000); /* Never returns. */
+	ws_socket(&evs, port, 0, 1000); /* Never returns. */
 
 	return (EXIT_SUCCESS);
 }

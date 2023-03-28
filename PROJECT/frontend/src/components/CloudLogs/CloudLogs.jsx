@@ -20,7 +20,10 @@ function CloudLogs() {
     const appletStyle = {
         'border': '1px solid #0d6efd', 'padding': '0', 'borderRadius': '10px', 'position': "relative", 'boxSizing': "border-box",
         //'boxShadow': '10px 0 10px -10px rgba(0, 0, 0, .5)'
-        'WebkitBoxSizing': 'border-box', 'overflowY': 'auto', 'height': '500px', 'textAlign': 'left'
+        'WebkitBoxSizing': 'border-box', 'overflowY': 'auto', 'textAlign': 'left',  
+        'height': 'calc(70vh - 130px)',
+
+        'height': 'calc(var(--vh, 1vh) * 70 - 135px)'
 
     }
     const connectSocket = (e) => {
@@ -74,9 +77,9 @@ function CloudLogs() {
 
     
             <div style={{display: 'flex', flexDirection:'column', width: '100%', }}>
-                <h3 style={{fontSize: '40px', margin: '20px auto 10px'}}>Logsend</h3>
+                {/* <h3 style={{fontSize: '40px', margin: '20px auto 10px'}}>Logsend</h3>
 
-            <div style={{height: '1px', width: '100%', borderBottom: '0.5px solid grey'}}></div>
+            <div style={{height: '1px', width: '100%', borderBottom: '0.5px solid grey'}}></div> */}
 
             <div style={{ display: 'flex', alignItems: 'flex-end', marginTop: '20px' }}>
                 
@@ -98,7 +101,7 @@ function CloudLogs() {
                </div>
 
 
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', marginTop: '25px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', margin: '15px 0', position: 'sticky', top: 0, zIndex: 1, minHeight: '2em', backgroundColor: 'white' }}>
                 <div style={{display: 'flex', flexDirection:'column', alignItems:'center', justifyContent:'flex-end'}}>
 
                     <label style={{fontSize: '18px', marginBottom: '5px'}}size="sm">Запрос (optional grep)</label>
@@ -126,7 +129,7 @@ function CloudLogs() {
                
             </div>
 
-            <div className="mb-3 " style={{ minHeight: '600px', margin: '20px auto', width: '100%' }}>
+            <div className="mb-3 " style={{ minHeight: '600px', margin: '0 auto', width: '100%' }}>
                 <div  style={appletStyle} >
                     <h4 style={titleStyles}>Ответ сервера</h4>
                     {error && <p style={{ paddingLeft: "5px", color: "red" }}>Ошибка подключения</p>}
